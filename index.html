@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Assinador de Fichas · Mod. 012 · SELGRON</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23f5a623'/%3E%3Ctext x='50' y='72' font-size='64' font-family='Arial' font-weight='bold' text-anchor='middle' fill='%23241a02'%3ES%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="logo">
+      <div class="mark">S</div>
+      <div>
+        HORAS · SELGRON
+        <small>Assinatura de fichas Mod. 012</small>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-view="assinar">Assinar fichas</button>
+      <button class="tab" data-view="painel">Painel de horas</button>
+      <button class="tab" data-view="config">Configurações</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ ASSINAR ============ -->
+    <section class="view active" id="view-assinar">
+      <h2 class="section-title">Assinar fichas</h2>
+      <p class="sub">Arraste as fichas que o time enviou. O sistema lê cada documento, mostra o conteúdo e sinaliza <strong>hora extra</strong> (que precisa da sua revisão). Confira, ajuste se precisar, e assine com um clique.</p>
+
+      <div class="firstrun" id="firstRun" hidden>
+        <strong>👋 Primeiro acesso neste navegador.</strong> Antes de assinar, vá em
+        <button class="btn small" onclick="document.querySelector('.tab[data-view=config]').click()">Configurações</button>
+        e (1) carregue a sua <b>assinatura</b> (PNG) e (2) importe a sua <b>base de horas</b> (JSON). Esses dados ficam só neste navegador — nunca vão para a internet.
+      </div>
+
+      <div class="dropzone" id="dropzone">
+        <div class="dz-icon">📄⬆️</div>
+        <div class="big">Solte os PDFs aqui ou clique para escolher</div>
+        <div class="hint">Pode selecionar vários de uma vez · nada é enviado para a internet, tudo fica no seu computador</div>
+        <input type="file" id="fileInput" accept="application/pdf" multiple hidden />
+      </div>
+
+      <div class="bulkbar" id="bulkbar" hidden>
+        <span class="count" id="fichaCount"></span>
+        <button class="btn ghost small" id="btnClear">Limpar lista</button>
+        <button class="btn primary" id="btnSignAll">✍️ Assinar todas (sem hora extra)</button>
+      </div>
+
+      <div class="cards" id="cards"></div>
+    </section>
+
+    <!-- ============ PAINEL ============ -->
+    <section class="view" id="view-painel">
+      <h2 class="section-title">Painel de horas</h2>
+      <p class="sub">Registro de todas as fichas — histórico pré-carregado + tudo que você assinar aqui. Por pessoa, por dia, por tipo.</p>
+
+      <div class="kpis" id="kpis"></div>
+
+      <div class="panel">
+        <h3>Horas por colaborador</h3>
+        <div class="bars" id="barsPessoa"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Registros por tipo</h3>
+        <div class="bars" id="barsTipo"></div>
+      </div>
+
+      <div class="filters">
+        <input type="text" id="fSearch" placeholder="🔎 Buscar nome, data, observação…" />
+        <select id="fPessoa"><option value="">Todos os colaboradores</option></select>
+        <select id="fTipo"><option value="">Todos os tipos</option></select>
+        <select id="fHE">
+          <option value="">Hora extra: todas</option>
+          <option value="1">Só hora extra</option>
+          <option value="0">Sem hora extra</option>
+        </select>
+        <button class="btn small" id="btnCsv">⬇️ Exportar CSV</button>
+      </div>
+
+      <div class="table-wrap">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th data-sort="data">Data</th>
+              <th data-sort="nome">Colaborador</th>
+              <th data-sort="secao">Seção</th>
+              <th data-sort="tipo">Tipo</th>
+              <th data-sort="entrada">Entrada</th>
+              <th data-sort="saida">Saída</th>
+              <th data-sort="horas">Horas</th>
+              <th data-sort="obs">Observação</th>
+              <th data-sort="origem">Origem</th>
+            </tr>
+          </thead>
+          <tbody id="tblBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ CONFIG ============ -->
+    <section class="view" id="view-config">
+      <h2 class="section-title">Configurações</h2>
+      <p class="sub">Sua assinatura e ajustes gerais.</p>
+
+      <div class="panel">
+        <h3>Assinatura (campo COORDENADOR / GERENTE / DIRETORIA)</h3>
+        <div class="setting-row">
+          <div class="sig-box"><img id="sigPreview" alt="assinatura" /></div>
+          <div>
+            <input type="file" id="sigInput" accept="image/png,image/jpeg" hidden />
+            <button class="btn" id="btnSigUpload">Carregar assinatura (PNG)</button>
+            <button class="btn ghost" id="btnSigReset">Remover assinatura</button>
+            <p class="sub" style="margin:8px 0 0">Use um PNG com fundo transparente. Fica salva só neste navegador.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Base de horas</h3>
+        <p class="sub" style="margin-top:0">A base fica salva só neste navegador. Na primeira vez, use <b>Importar base</b> com o arquivo de histórico que você recebeu. As fichas que você assina são somadas automaticamente. Faça backup com <b>Exportar base</b>.</p>
+        <button class="btn small" id="btnImportDb">Importar base (JSON)</button>
+        <button class="btn small ghost" id="btnExportDb">Exportar base (JSON)</button>
+        <button class="btn small ghost" id="btnResetDb" style="color:var(--danger)">Apagar fichas assinadas aqui</button>
+        <input type="file" id="dbInput" accept="application/json" hidden />
+      </div>
+    </section>
+  </main>
+
+  <div class="toast-wrap" id="toasts"></div>
+
+  <!-- Bibliotecas locais (sem internet) -->
+  <script src="vendor/pdf.min.js"></script>
+  <script src="vendor/pdf-lib.min.js"></script>
+  <script src="vendor/tesseract/tesseract.min.js"></script>
+  <!-- Dados embutidos -->
+  <script src="assets/assinatura.js"></script>
+  <script src="data/historico.js"></script>
+  <!-- App -->
+  <script src="app.js"></script>
+</body>
+</html>
