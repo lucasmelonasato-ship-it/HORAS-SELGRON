@@ -28,9 +28,10 @@
       <div class="auth-card">
         <div class="mark big">S</div>
         <h2>Entrar</h2>
-        <p class="sub">Use seu e-mail <b>@selgron.com.br</b>. Enviamos um link de acesso — sem senha.</p>
-        <input type="email" id="loginEmail" inputmode="email" autocomplete="email" placeholder="seu.nome@selgron.com.br" />
-        <button class="btn primary block" id="btnMagic">Enviar link de acesso</button>
+        <p class="sub">Use o e-mail e a senha que o gestor criou para você.</p>
+        <input type="email" id="loginEmail" inputmode="email" autocomplete="username" placeholder="seu.nome@selgron.com.br" />
+        <input type="password" id="loginPass" autocomplete="current-password" placeholder="Senha" />
+        <button class="btn primary block" id="btnLogin">Entrar</button>
         <p class="hint" id="loginMsg"></p>
       </div>
     </section>
@@ -115,6 +116,12 @@
         </div>
         <button class="btn primary" id="btnSaveConfig">Salvar</button>
         <button class="btn ghost" id="btnBack">Voltar</button>
+      </div>
+
+      <div class="panel">
+        <h3>Trocar minha senha</h3>
+        <div class="field"><label>Nova senha</label><input type="password" id="cfPass" autocomplete="new-password" placeholder="mínimo 6 caracteres" /></div>
+        <button class="btn" id="btnTrocarSenha">Salvar nova senha</button>
       </div>
     </section>
   </main>

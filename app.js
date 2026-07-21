@@ -129,15 +129,27 @@ async function initAuth() {
     else showView('login');
   } catch (e) { console.warn('auth init', e); showView('login'); }
 }
-async function enviarMagicLink() {
+function traduzErro(m) {
+  if (/invalid login credentials/i.test(m)) return 'E-mail ou senha incorretos.';
+  if (/email not confirmed/i.test(m)) return 'Conta ainda não confirmada. Peça ao gestor para confirmar seu usuário.';
+  return m;
+}
+async function fazerLogin() {
   const email = $('#loginEmail').value.trim().toLowerCase();
-  if (!email || !email.includes('@')) { toast('Digite um e-mail válido.', 'err'); return; }
-  if (!email.endsWith(DOMINIO)) { toast('Use seu e-mail ' + DOMINIO, 'err'); return; }
-  $('#btnMagic').disabled = true; $('#loginMsg').textContent = 'Enviando…';
-  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-  $('#btnMagic').disabled = false;
-  if (error) { $('#loginMsg').textContent = ''; toast('Erro: ' + error.message, 'err'); return; }
-  $('#loginMsg').innerHTML = '✅ Link enviado para <b>' + esc(email) + '</b>. Abra o e-mail e toque no link para entrar.';
+  const pass = $('#loginPass').value;
+  if (!email || !pass) { toast('Preencha e-mail e senha.', 'err'); return; }
+  $('#btnLogin').disabled = true; $('#loginMsg').textContent = 'Entrando…';
+  const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+  $('#btnLogin').disabled = false; $('#loginMsg').textContent = '';
+  if (error) { toast(traduzErro(error.message), 'err'); return; }
+  // sucesso é tratado pelo onAuthStateChange
+}
+async function trocarSenha() {
+  const p = $('#cfPass').value;
+  if (!p || p.length < 6) { toast('A senha precisa ter no mínimo 6 caracteres.', 'err'); return; }
+  const { error } = await sb.auth.updateUser({ password: p });
+  if (error) { toast('Erro: ' + error.message, 'err'); return; }
+  $('#cfPass').value = ''; toast('Senha alterada ✓', 'ok');
 }
 async function logout() { await sb.auth.signOut(); location.reload(); }
 
@@ -389,8 +401,9 @@ function irConfig() {
    ============================================================ */
 function init() {
   setupSubtabs();
-  $('#btnMagic').onclick = enviarMagicLink;
-  $('#loginEmail').addEventListener('keydown', e => { if (e.key === 'Enter') enviarMagicLink(); });
+  $('#btnLogin').onclick = fazerLogin;
+  $('#loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') fazerLogin(); });
+  $('#btnTrocarSenha').onclick = trocarSenha;
   $('#btnLogout').onclick = logout;
   $('#btnConfig').onclick = irConfig;
   $('#btnBack').onclick = rotearPorPapel;
