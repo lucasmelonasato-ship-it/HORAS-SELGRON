@@ -1,0 +1,15 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
+<script src="vendor/pdf-lib.min.js"></script>
+<script src="assets/modelo-ficha.js"></script>
+<script src="ficha-pdf.js"></script>
+<script>
+window.testGen = async function(sig){
+  const d={nome:'ANA PAULA MENDES',secao:'SUPRIMENTOS',matricula:'00777',data:'21.07.26',
+    comunicado:['SAIDA'],tipos:['Hora Extra'],entrada:'',saida:'19:45',
+    observacao:'Fechamento de pedidos urgentes'};
+  const bytes=await gerarFichaPDF(d, sig, sig);
+  // to base64 for transport
+  let s=''; for(let i=0;i<bytes.length;i++) s+=String.fromCharCode(bytes[i]);
+  return btoa(s);
+};
+</script></body></html>
