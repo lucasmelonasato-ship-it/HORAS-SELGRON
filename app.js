@@ -206,14 +206,12 @@ function renderFormFicha(base) {
     <div class="chips" id="chComunicado"></div>
     <label class="lbl">Tipo</label>
     <div class="chips" id="chTipos"></div>
+    <div class="field"><label>Data do evento</label><input type="date" id="fData"></div>
     <div class="row2">
-      <div class="field"><label>Data do evento</label><input type="date" id="fData" value="${base ? '' : ''}"></div>
-      <div class="field" id="wrapEntrada"><label>Entrada</label><input type="time" id="fEntrada" value="${esc(base?.entrada || '')}"></div>
+      <div class="field"><label>Entrada</label><input type="time" id="fEntrada" value="${esc(base?.entrada || '')}"></div>
+      <div class="field"><label>Saída</label><input type="time" id="fSaida" value="${esc(base?.saida || '')}"></div>
     </div>
-    <div class="row2">
-      <div class="field" id="wrapSaida"><label>Saída</label><input type="time" id="fSaida" value="${esc(base?.saida || '')}"></div>
-      <div class="field"><label>&nbsp;</label><div class="mut" id="horasCalc">—</div></div>
-    </div>
+    <div class="horas-note" id="horasCalc"></div>
     <div class="field"><label>Observação</label><textarea id="fObs" rows="2" placeholder="Motivo / detalhe">${esc(base?.observacao || '')}</textarea></div>
     <div id="wrapFalta" hidden>
       <div class="field"><label>Falta(s) no(s) dia(s)</label><input id="fFaltas" value="${esc(base?.faltas || '')}"></div>
@@ -226,7 +224,7 @@ function renderFormFicha(base) {
   COMUNICADOS.forEach(c => { const el = chip(c === 'SAIDA' ? 'SAÍDA' : c, novaSel.comunicado.includes(c)); el.onclick = () => { toggle(novaSel.comunicado, c); el.classList.toggle('on'); $('#wrapFalta').hidden = !novaSel.comunicado.includes('FALTA'); }; chC.appendChild(el); });
   const chT = $('#chTipos');
   TIPOS.forEach(t => { const el = chip(t, novaSel.tipos.includes(t), t === HORA_EXTRA); el.onclick = () => { toggle(novaSel.tipos, t); el.classList.toggle('on'); $('#heNota').hidden = !novaSel.tipos.includes(HORA_EXTRA); }; chT.appendChild(el); });
-  const upd = () => { const h = calcHoras($('#fEntrada').value, $('#fSaida').value); $('#horasCalc').textContent = h != null ? h.toFixed(2) + ' h' : '—'; };
+  const upd = () => { const h = calcHoras($('#fEntrada').value, $('#fSaida').value); $('#horasCalc').textContent = h != null ? '⏱ Total: ' + h.toFixed(2) + ' h' : ''; };
   $('#fEntrada').oninput = upd; $('#fSaida').oninput = upd;
   $('#wrapFalta').hidden = !novaSel.comunicado.includes('FALTA');
   $('#btnEnviarFicha').onclick = enviarFicha;
@@ -350,9 +348,13 @@ function cardFicha(f, modo) {
 /* ---------- Painel (gestor) ---------- */
 let _painelDados = [];
 async function carregarPainel() {
+  if (window.__DEMO) { renderPainel(); return; }
   const { data, error } = await sb.from('fichas').select('*').order('created_at', { ascending: false });
   if (error) { toast('Erro no painel: ' + error.message, 'err'); return; }
   _painelDados = data || [];
+  renderPainel();
+}
+function renderPainel() {
   const recs = _painelDados;
   const pessoas = new Set(recs.map(r => firstName(r.nome)));
   const totalHoras = recs.reduce((s, r) => s + (calcHoras(r.entrada, r.saida) || 0), 0);
