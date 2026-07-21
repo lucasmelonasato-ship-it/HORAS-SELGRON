@@ -158,7 +158,19 @@ main { max-width: 760px; margin: 0 auto; padding: clamp(16px, 4vw, 28px) clamp(1
 .badges { display: flex; flex-direction: column; gap: 5px; align-items: flex-end; flex-shrink: 0; }
 .fcard-tipos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .fcard-obs { margin-top: 10px; font-size: 13px; color: var(--muted); background: var(--surface-2); padding: 9px 11px; border-radius: 10px; }
-.fcard-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
+.fcard.done::before { background: var(--ok); }
+
+/* trilho de status */
+.track { display: flex; align-items: flex-start; gap: 4px; margin-top: 14px; }
+.tstep { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 70px; flex: 0 0 auto; color: var(--muted-2); font-size: 10.5px; font-weight: 700; text-align: center; }
+.tstep .ic { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--surface-2); border: 1.5px solid var(--border-2); font-size: 16px; filter: grayscale(1); opacity: .5; transition: .2s; }
+.tstep.done { color: var(--brand-deep); }
+.tstep.done .ic { background: var(--brand-soft); border-color: var(--brand); filter: none; opacity: 1; }
+.tstep.final.done { color: var(--ok); }
+.tstep.final.done .ic { background: var(--ok-bg); border-color: var(--ok); }
+.tline { flex: 1 1 auto; height: 2.5px; background: var(--border-2); border-radius: 2px; margin-top: 16px; }
+.tline.done { background: var(--brand); }
+.pill.sign { background: var(--info-bg); color: var(--info); border-color: var(--info-bd); }
 
 .badge { font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px; letter-spacing: .2px; white-space: nowrap; }
 .badge.he { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-bd); }

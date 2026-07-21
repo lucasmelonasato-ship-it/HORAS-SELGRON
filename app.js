@@ -271,14 +271,14 @@ async function carregarInbox() {
   if (error) { box.innerHTML = '<p class="mut">Erro: ' + esc(error.message) + '</p>'; return; }
   $('#inboxCount').textContent = data.length || '';
   if (!data.length) { box.innerHTML = '<p class="empty">Nenhuma ficha pendente. 🎉</p>'; return; }
-  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'inbox')));
+  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'gestor')));
 }
 async function carregarAssinadas() {
   const box = $('#assinadasLista'); box.innerHTML = '<p class="mut">Carregando…</p>';
-  const { data, error } = await sb.from('fichas').select('*').eq('status', 'assinada').order('assinada_em', { ascending: false });
+  const { data, error } = await sb.from('fichas').select('*').in('status', ['assinada', 'arquivada']).order('assinada_em', { ascending: false });
   if (error) { box.innerHTML = '<p class="mut">Erro: ' + esc(error.message) + '</p>'; return; }
   if (!data.length) { box.innerHTML = '<p class="empty">Nenhuma ficha assinada ainda.</p>'; return; }
-  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'assinada')));
+  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'gestor')));
 }
 
 async function assinarFicha(f, cardEl) {
@@ -288,7 +288,7 @@ async function assinarFicha(f, cardEl) {
   if (error) { toast('Erro ao assinar: ' + error.message, 'err'); return; }
   Object.assign(f, patch);
   toast(`Ficha de ${firstName(f.nome)} assinada ✓`, 'ok');
-  const novo = cardFicha(f, 'assinada'); cardEl.replaceWith(novo);
+  cardEl.replaceWith(cardFicha(f, 'gestor'));
   const c = $('#inboxCount'); const n = Math.max(0, (+c.textContent || 1) - 1); c.textContent = n || '';
 }
 
@@ -313,36 +313,59 @@ async function enviarDHO(f) {
   location.href = `mailto:${DHO_EMAIL}?subject=${encodeURIComponent(assunto)}&body=${body}`;
 }
 
+/* ---------- Trilho de status (📤 Enviada → ✍️ Assinada → 📧 No DHO) ---------- */
+function statusStep(status) { return status === 'arquivada' ? 3 : status === 'assinada' ? 2 : 1; }
+function statusTrack(f) {
+  const s = statusStep(f.status);
+  const step = (n, ic, label, final) => `<div class="tstep ${s >= n ? 'done' : ''}${final ? ' final' : ''}"><span class="ic">${ic}</span><span>${label}</span></div>`;
+  const line = n => `<div class="tline ${s >= n ? 'done' : ''}"></div>`;
+  return `<div class="track">${step(1, '📤', 'Enviada')}${line(2)}${step(2, '✍️', 'Assinada')}${line(3)}${step(3, '📧', 'No DHO', true)}</div>`;
+}
+
 /* ---------- Cartão de ficha ---------- */
-function cardFicha(f, modo) {
+function cardFicha(f, contexto) {  // contexto: 'gestor' | 'colab'
   const card = document.createElement('div');
-  card.className = 'fcard' + (f.hora_extra ? ' he' : '');
+  card.className = 'fcard' + (f.hora_extra ? ' he' : '') + (f.status === 'arquivada' ? ' done' : '');
   const horas = calcHoras(f.entrada, f.saida);
   const tp = (f.tipos || []).map(t => `<span class="pill ${t === HORA_EXTRA ? 'he' : ''}">${esc(t)}</span>`).join(' ') || '';
-  const st = { enviada: '<span class="badge norm">enviada</span>', assinada: '<span class="badge ok">✓ assinada</span>' }[f.status] || '';
   const heB = f.hora_extra ? '<span class="badge he">⚠ hora extra</span>' : '';
   card.innerHTML = `
     <div class="fcard-head">
       <div><div class="nm">${esc(f.nome || '')}</div>
       <div class="meta">${esc(normDate(f.data))} · ${esc((f.comunicado || []).join('/').replace('SAIDA', 'SAÍDA'))} ${f.entrada ? '· ent ' + esc(f.entrada) : ''} ${f.saida ? '· saí ' + esc(f.saida) : ''} ${horas != null ? '· ' + horas.toFixed(2) + 'h' : ''}</div></div>
-      <div class="badges">${modo === 'inbox' ? heB : (st + ' ' + heB)}</div>
+      <div class="badges">${heB}</div>
     </div>
     ${tp ? `<div class="fcard-tipos">${tp}</div>` : ''}
     ${f.observacao ? `<div class="fcard-obs">${esc(f.observacao)}</div>` : ''}
+    ${statusTrack(f)}
     <div class="fcard-actions"></div>`;
   const act = $('.fcard-actions', card);
   const addBtn = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn ' + cls; b.textContent = label; b.onclick = () => fn(b); act.appendChild(b); };
-  if (modo === 'inbox') {
-    addBtn(f.hora_extra ? '✍️ Revisar e assinar' : '✍️ Assinar', 'primary', () => assinarFicha(f, card));
-    addBtn('👁 Ver PDF', 'ghost small', async () => { await baixarFicha(f, false); });
-  } else if (modo === 'assinada') {
-    addBtn('📧 Enviar ao DHO', 'ok', () => enviarDHO(f));
-    addBtn('⬇️ Baixar', 'ghost small', () => baixarFicha(f, true));
-  } else if (modo === 'colab') {
-    addBtn('⬇️ Baixar', 'ghost small', () => baixarFicha(f, f.status === 'assinada'));
+  if (contexto === 'gestor') {
+    if (f.status === 'enviada') {
+      addBtn(f.hora_extra ? '✍️ Revisar e assinar' : '✍️ Assinar', 'primary', () => assinarFicha(f, card));
+      addBtn('👁 Ver PDF', 'ghost small', () => baixarFicha(f, false));
+    } else if (f.status === 'assinada') {
+      addBtn('📧 Enviar ao DHO', 'ok', async b => { b.disabled = true; await enviarDHO(f); await marcarDHO(f, card); });
+      addBtn('⬇️ Baixar', 'ghost small', async () => { await baixarFicha(f, true); await marcarDHO(f, card); });
+    } else { // arquivada — já foi ao DHO
+      addBtn('⬇️ Baixar novamente', 'ghost small', () => baixarFicha(f, true));
+      addBtn('📧 Reenviar ao DHO', 'ghost small', () => enviarDHO(f));
+    }
+  } else { // colaborador
+    addBtn('⬇️ Baixar', 'ghost small', () => baixarFicha(f, f.status !== 'enviada'));
     addBtn('📄 Duplicar', 'ghost small', () => { $$('.subtabs[data-group=colab] .subtab')[0].click(); renderFormFicha(f); });
   }
   return card;
+}
+
+async function marcarDHO(f, cardEl) {
+  if (f.status === 'arquivada') return;
+  const { error } = await sb.from('fichas').update({ status: 'arquivada' }).eq('id', f.id);
+  if (error) { toast('Erro ao registrar DHO: ' + error.message, 'err'); return; }
+  f.status = 'arquivada';
+  toast('Registrada como enviada ao DHO ✓', 'ok');
+  if (cardEl) cardEl.replaceWith(cardFicha(f, 'gestor'));
 }
 
 /* ---------- Painel (gestor) ---------- */
@@ -375,7 +398,7 @@ function renderTabelaPainel() {
   if (q) recs = recs.filter(r => norm(`${r.nome} ${r.data} ${(r.tipos || []).join(' ')} ${r.observacao}`).includes(q));
   $('#tblBody').innerHTML = recs.map(r => {
     const h = calcHoras(r.entrada, r.saida);
-    const st = r.status === 'assinada' ? '<span class="pill ok">assinada</span>' : '<span class="pill">enviada</span>';
+    const st = r.status === 'arquivada' ? '<span class="pill ok">📧 no DHO</span>' : r.status === 'assinada' ? '<span class="pill sign">✍️ assinada</span>' : '<span class="pill">📤 enviada</span>';
     return `<tr><td>${esc(normDate(r.data))}</td><td>${esc(r.nome || '')}</td><td>${esc((r.tipos || []).join(', '))}${r.hora_extra ? ' ⚠' : ''}</td><td>${esc(r.entrada || '')}</td><td>${esc(r.saida || '')}</td><td>${h != null ? h.toFixed(2) : '—'}</td><td>${st}</td></tr>`;
   }).join('') || '<tr><td colspan="7" class="empty">Nada encontrado.</td></tr>';
 }
