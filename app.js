@@ -1,774 +1,404 @@
 /* ============================================================
-   Assinador de Fichas Mod. 012 — SELGRON
-   Tudo roda no navegador. Nenhum arquivo sai do computador.
+   HORAS SELGRON — app (colaborador + gestor) sobre Supabase
    ============================================================ */
 'use strict';
 
-/* ---------- pdf.js worker (com fallback p/ funcionar via file://) ---------- */
-try {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
-} catch (e) { /* ignore */ }
+/* ---------- Configuração ---------- */
+const SUPA_URL = 'https://xewxckloxgjrffxslasq.supabase.co';
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhld3hja2xveGdqcmZmeHNsYXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1ODYzMTMsImV4cCI6MjEwMDE2MjMxM30.ALcLipiKYTGkUeN70KEIPL5sAZuS6LvNYnr8C9Yko4E';
+const DHO_EMAIL = 'jornadas@selgron.com.br';
+const DOMINIO = '@selgron.com.br';
 
-const { PDFDocument } = PDFLib;
+const sb = window.supabase.createClient(SUPA_URL, SUPA_ANON);
 
-/* ---------- Constantes ---------- */
-const TIPO_LABELS = [
-  { nome: 'Hora Extra', token: 'hora extra' },
-  { nome: 'Abono', token: 'abono' },
-  { nome: 'Recuperação', token: 'recupera' },
-  { nome: 'Trabalho Externo', token: 'trabalho externo' },
-  { nome: 'Problemas no Relógio Ponto', token: 'problemas' },
-  { nome: 'Particular', token: 'particular' },
-  { nome: 'Esquecimento do Registro do Ponto', token: 'esquecimento' },
-  { nome: 'Outros', token: 'outros' },
-];
+const TIPOS = ['Hora Extra', 'Recuperação', 'Abono', 'Trabalho Externo', 'Problemas no Relógio Ponto', 'Particular', 'Esquecimento do Registro do Ponto', 'Outros'];
+const COMUNICADOS = ['ENTRADA', 'SAIDA', 'FALTA'];
 const HORA_EXTRA = 'Hora Extra';
-const DETECT_SCALE = 2.2;
-const LS_DB = 'horas_selgron_db_v1';
-const LS_SIG = 'horas_selgron_sig_v1';
 
 /* ---------- Estado ---------- */
-let fichas = [];           // fichas carregadas p/ assinar
-let signatureDataUrl = localStorage.getItem(LS_SIG) || window.DEFAULT_SIGNATURE_DATAURL || '';
-let sigDims = null;        // {w,h} px da assinatura
-const temAssinatura = () => !!(signatureDataUrl && signatureDataUrl.startsWith('data:'));
+let profile = null;   // { id, email, nome, matricula, secao, papel, assinatura }
+let sigPads = {};
 
-/* ============================================================
-   Utilidades
-   ============================================================ */
+/* ---------- Utilidades ---------- */
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-const norm = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const norm = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const esc = s => (s ?? '').toString().replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const firstName = n => (n || '').trim().split(/\s+/)[0].toUpperCase();
 
 function toast(msg, kind = '') {
   const el = document.createElement('div');
-  el.className = 'toast ' + kind;
-  el.textContent = msg;
+  el.className = 'toast ' + kind; el.textContent = msg;
   $('#toasts').appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 3200);
-  setTimeout(() => el.remove(), 3600);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 3400);
+  setTimeout(() => el.remove(), 3800);
 }
-
-function calcHoras(entrada, saida) {
-  if (!entrada || !saida) return null;
-  const p = t => { const m = t.match(/(\d{1,2})[:h](\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
-  const a = p(entrada), b = p(saida);
-  if (a == null || b == null) return null;
-  let d = b - a; if (d < 0) d += 1440;
-  return Math.round(d / 60 * 100) / 100;
-}
-const firstName = n => (n || '').trim().split(/\s+/)[0].toUpperCase();
-
-// "nome" que na verdade veio do nome do arquivo e não é uma pessoa
-function ehNomeLixo(n) {
-  const x = norm(n).replace(/[.\-]/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!x) return true;
-  if (/^(mod|for|ficha|documento|doc|scan|digitalizar|img|image|imagem|foto|whatsapp|arquivo|pdf|comunicado)\b/.test(x)) return true;
-  if (x.replace(/[^a-z]/g, '').length < 3) return true; // sem letras suficientes
-  return false;
-}
-
-// Padroniza qualquer data para dd.mm.aa (dia.mês.ano com 2 dígitos).
-// Quando a ficha não traz o ano, assume o ano atual.
 function normDate(s) {
   if (!s) return '';
-  const anoAtual = String(new Date().getFullYear()).slice(2);
+  const y2 = String(new Date().getFullYear()).slice(2);
   let m = String(s).match(/(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})/);
   if (m) { let [, d, mo, y] = m; if (y.length === 4) y = y.slice(2); return `${d.padStart(2, '0')}.${mo.padStart(2, '0')}.${y.padStart(2, '0')}`; }
-  m = String(s).match(/(\d{1,2})[.\/\-](\d{1,2})/); // sem ano -> usa o ano atual
-  if (m) return `${m[1].padStart(2, '0')}.${m[2].padStart(2, '0')}.${anoAtual}`;
+  m = String(s).match(/(\d{1,2})[.\/\-](\d{1,2})/);
+  if (m) return `${m[1].padStart(2, '0')}.${m[2].padStart(2, '0')}.${y2}`;
   return String(s).trim();
 }
-
-function dataURLtoBytes(durl) {
-  const b64 = durl.split(',')[1];
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return arr;
+function dateInputBR(v) { const m = (v || '').match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}.${m[2]}.${m[1].slice(2)}` : normDate(v); }
+function calcHoras(e, s) {
+  if (!e || !s) return null;
+  const p = t => { const m = t.match(/(\d{1,2})[:h](\d{2})/); return m ? +m[1] * 60 + +m[2] : null; };
+  const a = p(e), b = p(s); if (a == null || b == null) return null;
+  let d = b - a; if (d < 0) d += 1440; return Math.round(d / 60 * 100) / 100;
 }
-
-/* ============================================================
-   Parser de nome de arquivo (fonte confiável p/ este time)
-   ex.: "JAIR - RECUPERACAO - Mod. 012 06-07-2026 - entrada 06 37"
-   ============================================================ */
-const TIPO_KEYWORDS = [
-  ['hora extra', 'Hora Extra'],
-  ['recupera', 'Recuperação'],
-  ['trabalho externo', 'Trabalho Externo'], ['curso', 'Trabalho Externo'], ['externo', 'Trabalho Externo'],
-  ['abono', 'Abono'],
-  ['particular', 'Particular'],
-  ['esquecimento', 'Esquecimento do Registro do Ponto'],
-  ['problema ponto', 'Problemas no Relógio Ponto'], ['problemas', 'Problemas no Relógio Ponto'],
-  ['ajustes', 'Outros'], ['temporaria', 'Outros'], ['entrada pos', 'Outros'],
-];
-function parseFilename(fn) {
-  const base = fn.replace(/\.pdf$/i, '').replace(/#U([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-  const n = norm(base);
-  const nome = base.split(/\s+-\s+/)[0].trim();
-  const tipos = [];
-  for (const [kw, cat] of TIPO_KEYWORDS) if (n.includes(kw) && !tipos.includes(cat)) tipos.push(cat);
-  const falta = /\bfalta\b/.test(n);
-  let data = '';
-  let m = base.match(/(\d{1,2})[-./](\d{1,2})[-./](\d{2,4})/);
-  if (m) { let [_, d, mo, y] = m; if (y.length === 2) y = '20' + y; data = `${d.padStart(2, '0')}/${mo.padStart(2, '0')}/${y}`; }
-  else { m = base.match(/\b(\d{1,2})[.](\d{1,2})\b/); if (m) data = `${m[1].padStart(2, '0')}/${m[2].padStart(2, '0')}/2026`; }
-  let entrada = '', saida = '';
-  const re = /(entrada|saida|sa[íi]da)\s*(\d{1,2})\s*[:h ]\s*(\d{2})/gi;
-  let t;
-  while ((t = re.exec(base))) {
-    const val = `${t[2].padStart(2, '0')}:${t[3]}`;
-    if (norm(t[1]).startsWith('entrada') && !entrada) entrada = val;
-    else if (norm(t[1]).startsWith('saida') && !saida) saida = val;
-  }
-  return { nome, tipos, falta, data, entrada, saida };
-}
-
-/* ============================================================
-   Parser de PDF (texto + detecção de checkbox por pixel)
-   ============================================================ */
-async function parsePdf(bytes, filename) {
-  const fnData = parseFilename(filename);
-  const result = {
-    nome: '', secao: '', matricula: '', data: '', entrada: '', saida: '',
-    observacao: '', tipos: [], comunicado: [], horaExtra: false,
-    canvas: null, pageW: 0, pageH: 0, sigBox: null, rotation: 0, garbled: false,
-  };
-
-  let doc, page, viewport, canvas;
-  try {
-    doc = await pdfjsLib.getDocument({ data: bytes.slice(0), verbosity: 0 }).promise;
-    page = await doc.getPage(1);
-    const v1 = page.getViewport({ scale: 1 });
-    result.pageW = v1.width; result.pageH = v1.height; result.rotation = v1.rotation || 0;
-    viewport = page.getViewport({ scale: DETECT_SCALE });
-    canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    await page.render({ canvasContext: ctx, viewport }).promise;
-    result.canvas = canvas;
-  } catch (e) {
-    console.warn('render falhou', e);
-  }
-
-  // --- rótulos do modelo (texto do formulário) p/ mapear checkboxes e achar COORDENADOR ---
-  let items = [];
-  try {
-    const tc = await page.getTextContent();
-    items = tc.items.filter(i => i.str && i.str.trim())
-      .map(i => ({ str: i.str, x: i.transform[4], y: i.transform[5], w: i.width || 0, h: i.height || Math.abs(i.transform[3]) || 8 }));
-  } catch (e) { /* garbled */ }
-
-  // --- campos de formulário (AcroForm) — fonte exata dos dados ---
-  let anns = [];
-  try { anns = await page.getAnnotations(); } catch (e) { /* sem anotações */ }
-  const fields = anns.filter(a => a.fieldName);
-  const isCheck = a => norm(a.fieldName).includes('check') || ['sim', 'off', 'on', 'yes', 'no'].includes(norm(a.fieldValue));
-  const val = pred => { const f = fields.find(a => !isCheck(a) && pred(norm(a.fieldName))); return f ? (f.fieldValue || '').toString().trim() : ''; };
-  const timeFmt = v => { const m = (v || '').match(/(\d{1,2})[:h.\s]+(\d{2})/); return m ? `${m[1].padStart(2, '0')}:${m[2]}` : (v || '').trim(); };
-
-  const hasForm = fields.some(a => ['nome', 'data', 'colaborad', 'funcion', 'matr', 'observ'].some(k => norm(a.fieldName).includes(k)));
-  result.hasForm = hasForm;
-  result.garbled = !hasForm;
-
-  if (hasForm) {
-    result.nome = val(n => n === 'nome' || n.startsWith('nome') || n.includes('colaborad') || n.includes('funcion'));
-    result.secao = val(n => n.startsWith('sec') || n.includes('seçao'));
-    const matr = val(n => n.includes('matr'));
-    result.matricula = (matr.match(/\d+/) || [matr])[0] || '';
-    result.data = val(n => n.includes('data'));
-    result.entrada = timeFmt(val(n => n === 'entrada'));
-    result.saida = timeFmt(val(n => n.includes('said') || n.includes('saída')));
-    result.observacao = val(n => n.includes('observ'));
-
-    // mapeia cada checkbox marcado ao rótulo de tipo mais próximo à sua direita
-    const boxes = fields.filter(isCheck).map(a => ({
-      cx: (a.rect[0] + a.rect[2]) / 2, cy: (a.rect[1] + a.rect[3]) / 2,
-      on: !['off', 'no', ''].includes(norm(a.fieldValue)),
-    }));
-    for (const t of TIPO_LABELS) {
-      const lab = items.find(i => norm(i.str).includes(t.token));
-      if (!lab) continue;
-      const labY = lab.y + (lab.h || 8) * 0.4;
-      let best = null, bd = 1e9;
-      for (const b of boxes) {
-        if (b.cx < lab.x && Math.abs(b.cy - labY) < 9) { const d = lab.x - b.cx; if (d < 60 && d < bd) { bd = d; best = b; } }
-      }
-      if (best && best.on) result.tipos.push(t.nome);
-    }
-  } else {
-    result.tipos = fnData.tipos.slice();
-  }
-
-  // Hora Extra: marca se QUALQUER sinal indicar (lado seguro)
-  const heText = norm(result.observacao).includes('hora extra');
-  result.horaExtra = result.tipos.includes(HORA_EXTRA) || fnData.tipos.includes(HORA_EXTRA) || heText;
-  if (result.horaExtra && !result.tipos.includes(HORA_EXTRA)) result.tipos.push(HORA_EXTRA);
-
-  // completar campos com o nome do arquivo quando faltarem
-  if (!result.nome) result.nome = fnData.nome;
-  if (!result.data) result.data = fnData.data;
-  if (!result.entrada) result.entrada = fnData.entrada;
-  if (!result.saida) result.saida = fnData.saida;
-  if (!result.secao) result.secao = 'SUPRIMENTOS';
-  result.data = normDate(result.data);            // sempre dd.mm.aa
-  result.nome = (result.nome || '').toUpperCase(); // nome sempre em MAIÚSCULAS (padrão único)
-
-  // descarta "nome" que na verdade é lixo do nome do arquivo (Mod. 012, Ficha, Documento…)
-  if (ehNomeLixo(result.nome)) result.nome = '';
-  // fichas escaneadas/achatadas (sem formulário) tentam OCR sobre a imagem
-  result.needsOcr = !hasForm && !!result.canvas;
-  // marca fichas que o app não conseguiu ler (precisam de preenchimento manual)
-  result.precisaRevisar = !result.nome || !result.data;
-
-  // --- posição da assinatura (campo COORDENADOR) ---
-  result.sigBox = computeSigBox(items, result.pageW, result.pageH, items.length > 0);
-
-  return result;
-}
-
-function computeSigBox(items, pageW, pageH, readable) {
-  const sigW = Math.min(132, pageW * 0.17);
-  const ratio = sigDims ? sigDims.h / sigDims.w : (58 / 241);
-  const sigH = sigW * ratio;
-  let centerX = pageW * 0.72;
-  let bottomY = pageH * 0.42; // origem inferior-esquerda (PDF)
-  if (readable) {
-    const lab = items.find(i => norm(i.str).includes('coordenador'));
-    if (lab) { centerX = lab.x + lab.w / 2; bottomY = lab.y + 15; }
-  }
-  const leftPt = centerX - sigW / 2;
-  const topPt = pageH - (bottomY + sigH); // origem superior-esquerda (p/ overlay)
-  return { leftPt, topPt, wPt: sigW, hPt: sigH };
-}
-
-/* ============================================================
-   OCR — lê fichas escaneadas/achatadas (roda no modo servidor)
-   ============================================================ */
-let _ocrWorker = null;
-async function getOcr() {
-  if (_ocrWorker) return _ocrWorker;
-  if (typeof Tesseract === 'undefined') throw new Error('OCR indisponível');
-  const base = new URL('vendor/tesseract/', location.href).href;
-  _ocrWorker = await Tesseract.createWorker('por', 1, {
-    workerPath: base + 'worker.min.js',
-    corePath: base,
-    langPath: base + 'lang/',
-    gzip: true,
-  });
-  return _ocrWorker;
-}
-
-async function ocrExtract(canvas) {
-  const w = await getOcr();
-  const { data } = await w.recognize(canvas);
-  const text = data.text || '';
-  const words = (data.words || []).map(x => ({ t: x.text, y: (x.bbox.y0 + x.bbox.y1) / 2, x0: x.bbox.x0, x1: x.bbox.x1 }));
-  const lineRightOf = tok => {
-    const lab = words.find(w => norm(w.t).includes(tok));
-    if (!lab) return '';
-    return words.filter(w => Math.abs(w.y - lab.y) < 12 && w.x0 >= lab.x1 - 2)
-      .sort((a, b) => a.x0 - b.x0).map(w => w.t).join(' ');
-  };
-  let nome = lineRightOf('nome').replace(/[^A-Za-zÀ-ÿ ]/g, ' ').replace(/\s+/g, ' ').trim();
-  const dm = text.match(/(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);
-  const data_ = dm ? dm[0] : '';
-  const timeOn = tok => { const m = lineRightOf(tok).match(/(\d{1,2})\s*[:h.]?\s*(\d{2})\b/); return m ? `${m[1].padStart(2, '0')}:${m[2]}` : ''; };
-  const obs = lineRightOf('observ').replace(/[|\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-  return { nome, data: data_, entrada: timeOn('entrada'), saida: timeOn('sa'), obs, text };
-}
-
-// Processa a fila de OCR depois que os cartões já apareceram
-function ocrDisponivel() { return typeof Tesseract !== 'undefined' && location.protocol !== 'file:'; }
-
-async function runOcrQueue() {
-  const pend = fichas.filter(f => f.needsOcr && !f.ocrDone && !f.signed);
-  if (!pend.length) return;
-  if (!ocrDisponivel()) { pend.forEach(f => f.ocrDone = true); renderCards(); return; }
-  for (const f of pend) {
-    f.ocrRunning = true; renderCards();
-    try {
-      const r = await ocrExtract(f.canvas);
-      // nome: aceita o do OCR se for melhor (nome atual é lixo/vazio, ou o do OCR começa com o mesmo 1º nome)
-      const bomOcrNome = r.nome && !ehNomeLixo(r.nome) && r.nome.replace(/[^A-Za-zÀ-ÿ]/g, '').length >= 4 &&
-        (!f.nome || ehNomeLixo(f.nome) || norm(r.nome).startsWith(norm(firstName(f.nome))));
-      if (bomOcrNome) f.nome = r.nome.toUpperCase();
-      if (!f.data && r.data) f.data = normDate(r.data);
-      if (!f.entrada && r.entrada) f.entrada = r.entrada;
-      if (!f.saida && r.saida) f.saida = r.saida;
-      if (!f.observacao && r.obs) f.observacao = r.obs;
-      if (/hora\s*extra/.test(norm(r.text))) { f.horaExtra = true; if (!f.tipos.includes(HORA_EXTRA)) f.tipos.push(HORA_EXTRA); }
-    } catch (e) { console.warn('OCR falhou', e); }
-    f.ocrRunning = false; f.ocrDone = true;
-    f.precisaRevisar = !(f.nome && f.nome.trim()) || !(f.data && f.data.trim());
-    renderCards();
-  }
-}
-
-/* ============================================================
-   Carregamento de arquivos
-   ============================================================ */
-function setupDropzone() {
-  const dz = $('#dropzone'), input = $('#fileInput');
-  dz.addEventListener('click', () => input.click());
-  input.addEventListener('change', () => { handleFiles(input.files); input.value = ''; });
-  ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
-  ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
-  dz.addEventListener('drop', e => handleFiles(e.dataTransfer.files));
-}
-
-async function handleFiles(fileList) {
-  const files = Array.from(fileList).filter(f => /pdf$/i.test(f.name));
-  if (!files.length) { toast('Selecione arquivos PDF.', 'err'); return; }
-  toast(`Lendo ${files.length} ficha(s)…`);
-  await ensureSigDims();
-  for (const f of files) {
-    try {
-      const bytes = new Uint8Array(await f.arrayBuffer());
-      const parsed = await parsePdf(bytes, f.name);
-      fichas.push({ id: 'f' + Date.now() + Math.random().toString(36).slice(2, 6), filename: f.name, bytes, ...parsed, signed: false });
-    } catch (e) {
-      console.error(e); toast(`Erro ao ler ${f.name}`, 'err');
-    }
-  }
-  renderCards();
-  // fichas escaneadas: tenta ler o conteúdo por OCR (roda no modo servidor)
-  const comOcr = fichas.some(f => f.needsOcr && !f.ocrDone);
-  if (comOcr && ocrDisponivel()) { toast('Lendo ficha(s) escaneada(s) com OCR…'); runOcrQueue(); }
-  else if (comOcr) { toast('Ficha escaneada: preencha Nome e Data (ou use o modo servidor p/ leitura automática).'); runOcrQueue(); }
-}
-
-/* ============================================================
-   Cartões de ficha
-   ============================================================ */
-function renderCards() {
-  const wrap = $('#cards');
-  wrap.innerHTML = '';
-  const pend = fichas.filter(f => !f.signed).length;
-  $('#bulkbar').hidden = fichas.length === 0;
-  $('#fichaCount').textContent = `${fichas.length} ficha(s) · ${pend} pendente(s)`;
-  const semHE = fichas.filter(f => !f.signed && !f.horaExtra).length;
-  $('#btnSignAll').disabled = semHE === 0;
-  $('#btnSignAll').textContent = `✍️ Assinar todas sem hora extra (${semHE})`;
-
-  for (const f of fichas) wrap.appendChild(buildCard(f));
-}
-
-function buildCard(f) {
-  const card = document.createElement('div');
-  const revisar = !f.signed && f.precisaRevisar;
-  card.className = 'card' + (f.horaExtra ? ' he' : '') + (f.signed ? ' signed' : '') + (revisar ? ' revisar' : '');
-  const badge = f.signed
-    ? '<span class="badge ok">✓ ASSINADA</span>'
-    : (f.ocrRunning ? '<span class="badge rev">⏳ LENDO (OCR)…</span>'
-      : (revisar ? '<span class="badge rev">✎ PREENCHER</span>'
-        : (f.horaExtra ? '<span class="badge he">⚠ HORA EXTRA</span>' : '<span class="badge norm">Pode aprovar</span>')));
-
-  card.innerHTML = `
-    <div class="card-head">
-      <div style="flex:1">
-        <div class="nm">${esc(f.nome || '(sem nome — preencha abaixo)')}</div>
-        <div class="meta">${esc(f.data || 's/ data')} · ${esc(f.secao || '')} ${f.matricula ? '· mat. ' + esc(f.matricula) : ''}</div>
-      </div>
-      ${badge}
-    </div>
-    <div class="preview-wrap"></div>
-    ${revisar ? '<div class="warn-note rev">✎ Não consegui ler este arquivo (ficha escaneada/achatada). Confira a imagem acima e preencha <b>Nome</b> e <b>Data</b> antes de assinar.</div>' : ''}
-    ${f.horaExtra && !f.signed ? '<div class="warn-note">⚠ Contém hora extra — não é aprovada automaticamente. Revise e, se estiver correta, assine manualmente.</div>' : ''}
-    <div class="fields">
-      <div class="field"><label>Nome</label><input data-k="nome" value="${esc(f.nome)}" ${!f.nome ? 'data-need="1"' : ''}></div>
-      <div class="field"><label>Data</label><input data-k="data" value="${esc(f.data)}" ${!f.data ? 'data-need="1"' : ''}></div>
-      <div class="field"><label>Seção</label><input data-k="secao" value="${esc(f.secao)}"></div>
-      <div class="field"><label>Matrícula</label><input data-k="matricula" value="${esc(f.matricula)}"></div>
-      <div class="field"><label>Entrada</label><input data-k="entrada" value="${esc(f.entrada)}"></div>
-      <div class="field"><label>Saída</label><input data-k="saida" value="${esc(f.saida)}"></div>
-      <div class="field full"><label>Observação</label><textarea data-k="observacao">${esc(f.observacao)}</textarea></div>
-    </div>
-    <div class="tipos"></div>
-    <div class="savename">💾 Salvar como: <span class="fn"></span></div>
-    <div class="card-actions"></div>
-  `;
-
-  // preview + assinatura arrastável
-  const pw = card.querySelector('.preview-wrap');
-  if (f.canvas) {
-    const c = f.canvas; c.className = 'preview';
-    pw.appendChild(c);
-    if (!f.signed) setupSigDrag(pw, f, c);
-    else { const done = document.createElement('div'); done.className = 'sig-hint'; done.textContent = 'assinada'; pw.appendChild(done); }
-  }
-
-  // chips de tipo
-  const tp = card.querySelector('.tipos');
-  for (const t of TIPO_LABELS) {
-    const on = f.tipos.includes(t.nome);
-    const chip = document.createElement('span');
-    chip.className = 'chip' + (on ? ' on' : '') + (t.nome === HORA_EXTRA ? ' he' : '');
-    chip.textContent = t.nome;
-    chip.onclick = () => {
-      if (f.signed) return;
-      const idx = f.tipos.indexOf(t.nome);
-      if (idx >= 0) f.tipos.splice(idx, 1); else f.tipos.push(t.nome);
-      f.horaExtra = f.tipos.includes(HORA_EXTRA);
-      renderCards();
-    };
-    tp.appendChild(chip);
-  }
-
-  // nome do arquivo que será salvo (atualiza ao vivo)
-  const fnEl = card.querySelector('.savename .fn');
-  const updateFn = () => { if (fnEl) fnEl.textContent = signedFilename(f); };
-  updateFn();
-
-  // inputs -> estado
-  card.querySelectorAll('[data-k]').forEach(inp => {
-    inp.addEventListener('input', () => {
-      f[inp.dataset.k] = inp.value;
-      if (inp.value.trim()) inp.removeAttribute('data-need');
-      // recomputa se ainda precisa revisar (nome + data preenchidos)
-      const antes = f.precisaRevisar;
-      f.precisaRevisar = !(f.nome && f.nome.trim()) || !(f.data && f.data.trim());
-      updateFn();
-      if (antes !== f.precisaRevisar) renderCards();
-    });
-  });
-
-  // ações
-  const act = card.querySelector('.card-actions');
-  if (f.signed) {
-    const b = document.createElement('button'); b.className = 'btn ok'; b.textContent = '⬇️ Baixar novamente';
-    b.onclick = () => downloadSigned(f); act.appendChild(b);
-    const r = document.createElement('button'); r.className = 'btn ghost'; r.textContent = 'Remover';
-    r.onclick = () => { fichas = fichas.filter(x => x !== f); renderCards(); }; act.appendChild(r);
-  } else {
-    const b = document.createElement('button');
-    b.className = 'btn ' + (f.horaExtra ? 'primary' : 'ok');
-    b.textContent = f.horaExtra ? '✍️ Revisar e assinar mesmo assim' : '✍️ Assinar e baixar';
-    b.onclick = () => signFicha(f);
-    act.appendChild(b);
-    const r = document.createElement('button'); r.className = 'btn ghost'; r.textContent = 'Remover';
-    r.onclick = () => { fichas = fichas.filter(x => x !== f); renderCards(); }; act.appendChild(r);
-  }
-  return card;
-}
-
-/* Assinatura arrastável sobre o preview */
-function setupSigDrag(pw, f, canvas) {
-  const box = f.sigBox; if (!box) return;
-  const drag = document.createElement('div');
-  drag.className = 'sig-drag';
-  const img = document.createElement('img'); img.src = signatureDataUrl; drag.appendChild(img);
-  const hint = document.createElement('div'); hint.className = 'sig-hint'; hint.textContent = '↔ arraste a assinatura para ajustar';
-  pw.appendChild(drag); pw.appendChild(hint);
-
-  function place() {
-    const scale = canvas.clientWidth / f.pageW;
-    drag.style.left = (box.leftPt * scale) + 'px';
-    drag.style.top = (box.topPt * scale) + 'px';
-    drag.style.width = (box.wPt * scale) + 'px';
-    drag.style.height = (box.hPt * scale) + 'px';
-  }
-  place();
-  window.addEventListener('resize', place);
-
-  let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
-  const down = e => {
-    dragging = true; drag.classList.add('dragging');
-    const p = e.touches ? e.touches[0] : e;
-    sx = p.clientX; sy = p.clientY; ox = box.leftPt; oy = box.topPt;
-    e.preventDefault();
-  };
-  const move = e => {
-    if (!dragging) return;
-    const p = e.touches ? e.touches[0] : e;
-    const scale = canvas.clientWidth / f.pageW;
-    box.leftPt = ox + (p.clientX - sx) / scale;
-    box.topPt = oy + (p.clientY - sy) / scale;
-    place();
-  };
-  const up = () => { dragging = false; drag.classList.remove('dragging'); };
-  drag.addEventListener('mousedown', down); drag.addEventListener('touchstart', down, { passive: false });
-  window.addEventListener('mousemove', move); window.addEventListener('touchmove', move, { passive: false });
-  window.addEventListener('mouseup', up); window.addEventListener('touchend', up);
-}
-
-/* ============================================================
-   Assinatura do PDF (pdf-lib)
-   ============================================================ */
-async function ensureSigDims() {
-  if (sigDims) return;
-  await new Promise(res => {
-    const im = new Image();
-    im.onload = () => { sigDims = { w: im.naturalWidth, h: im.naturalHeight }; res(); };
-    im.onerror = () => { sigDims = { w: 241, h: 58 }; res(); };
-    im.src = signatureDataUrl;
-  });
-}
-
-async function makeSignedPdf(f) {
-  const pdf = await PDFDocument.load(f.bytes.slice(0));
-  const page = pdf.getPages()[0];
-  const sigBytes = dataURLtoBytes(signatureDataUrl);
-  let img;
-  try { img = await pdf.embedPng(sigBytes); }
-  catch (e) { img = await pdf.embedJpg(sigBytes); }
-  const { width: pw, height: ph } = page.getSize();
-  const b = f.sigBox;
-  const x = b.leftPt;
-  const y = ph - (b.topPt + b.hPt);   // topo-esquerda -> base-esquerda
-  page.drawImage(img, { x, y, width: b.wPt, height: b.hPt });
-  return await pdf.save();
-}
-
-// remove caracteres que o sistema de arquivos não aceita ( / \ : * ? " < > | )
-function fsSafe(s) { return (s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim(); }
-
-// Nome no padrão: NOME - Mod 012 - dd.mm.aa - ENTRADA HH MM - SAIDA HH MM.pdf
-function signedFilename(f) {
-  const doArquivo = fsSafe((f.filename || '').replace(/\.pdf$/i, '').split(/\s+-\s+/)[0]);
-  const nome = (fsSafe(f.nome) || doArquivo || 'FICHA').toUpperCase();
+const fsSafe = s => (s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+function nomeArquivo(f) {
+  const nome = (fsSafe(f.nome) || 'FICHA').toUpperCase();
   const data = normDate(f.data);
-  const horas = t => (t || '').replace(':', ' ');
+  const h = t => (t || '').replace(':', ' ');
   const partes = [];
-  if (f.entrada) partes.push('ENTRADA ' + horas(f.entrada));
-  if (f.saida) partes.push('SAIDA ' + horas(f.saida));
+  if (f.entrada) partes.push('ENTRADA ' + h(f.entrada));
+  if (f.saida) partes.push('SAIDA ' + h(f.saida));
   let nom = `${nome} - Mod 012`;
   if (data) nom += ` - ${data}`;
   if (partes.length) nom += ` - ${partes.join(' - ')}`;
   return fsSafe(nom) + '.pdf';
 }
-
-async function downloadSigned(f) {
-  const out = f.signedBytes || await makeSignedPdf(f);
-  const blob = new Blob([out], { type: 'application/pdf' });
+function baixarBytes(bytes, nome) {
+  const blob = new Blob([bytes], { type: 'application/pdf' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = signedFilename(f);
+  const a = document.createElement('a'); a.href = url; a.download = nome;
   document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
-function faltaPreencher(f) { return !(f.nome && f.nome.trim()) || !(f.data && f.data.trim()); }
-
-async function signFicha(f) {
-  if (!temAssinatura()) { toast('Adicione a sua assinatura em Configurações antes de assinar.', 'err'); irParaConfig(); return; }
-  if (faltaPreencher(f)) {
-    toast('Preencha o Nome e a Data antes de assinar esta ficha.', 'err');
-    const inp = document.querySelector('.card.revisar [data-need]');
-    if (inp) inp.focus();
-    return;
-  }
-  try {
-    f.signedBytes = await makeSignedPdf(f);
-    f.signed = true;
-    await downloadSigned(f);
-    addToDb(f);
-    renderCards();
-    renderPainel();
-    toast(`Ficha de ${firstName(f.nome)} assinada e baixada ✓`, 'ok');
-  } catch (e) {
-    console.error(e); toast('Erro ao assinar: ' + e.message, 'err');
-  }
+/* ---------- Assinatura (desenho na tela) ---------- */
+function makeSigPad(canvas) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, r.width) * dpr; canvas.height = Math.max(1, r.height) * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#141444';
+  let drawing = false, empty = true, last = null;
+  const pos = e => { const b = canvas.getBoundingClientRect(); return { x: e.clientX - b.left, y: e.clientY - b.top }; };
+  const down = e => { drawing = true; last = pos(e); e.preventDefault(); };
+  const move = e => { if (!drawing) return; const p = pos(e); ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; empty = false; e.preventDefault(); };
+  const up = () => { drawing = false; };
+  canvas.addEventListener('pointerdown', down); canvas.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up); canvas.addEventListener('pointerleave', up);
+  return {
+    clear() { const b = canvas.getBoundingClientRect(); ctx.clearRect(0, 0, b.width, b.height); empty = true; },
+    isEmpty() { return empty; },
+    dataURL() { return empty ? '' : canvas.toDataURL('image/png'); },
+    load(durl) { if (!durl) return; const im = new Image(); im.onload = () => { const b = canvas.getBoundingClientRect(); const w = Math.min(b.width, 260); ctx.drawImage(im, 6, 6, w, w * (im.height / im.width)); empty = false; }; im.src = durl; },
+  };
+}
+function initSigPads() {
+  ['obSig', 'cfSig'].forEach(id => { const c = $('#' + id); if (c && !sigPads[id]) sigPads[id] = makeSigPad(c); });
+  $$('.sigclear').forEach(b => b.onclick = () => sigPads[b.dataset.clear] && sigPads[b.dataset.clear].clear());
+}
+function bindSigUpload(inputId, padId) {
+  const inp = $('#' + inputId); if (!inp) return;
+  inp.onchange = () => { const f = inp.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { sigPads[padId].clear(); sigPads[padId].load(rd.result); }; rd.readAsDataURL(f); };
 }
 
-async function signAllNoHE() {
-  if (!temAssinatura()) { toast('Adicione a sua assinatura em Configurações antes de assinar.', 'err'); irParaConfig(); return; }
-  const alvo = fichas.filter(f => !f.signed && !f.horaExtra && !faltaPreencher(f));
-  const pulados = fichas.filter(f => !f.signed && !f.horaExtra && faltaPreencher(f)).length;
-  if (!alvo.length) { toast(pulados ? 'Preencha Nome e Data das fichas destacadas.' : 'Nada para assinar.', 'err'); return; }
-  for (const f of alvo) {
-    try { f.signedBytes = await makeSignedPdf(f); f.signed = true; addToDb(f); await downloadSigned(f); }
-    catch (e) { console.error(e); toast('Erro em ' + f.filename, 'err'); }
-  }
-  renderCards(); renderPainel();
-  toast(`${alvo.length} ficha(s) assinadas e baixadas ✓` + (pulados ? ` · ${pulados} pulada(s) por falta de dados` : ''), 'ok');
-}
-
-/* ============================================================
-   Base de dados (localStorage + seed)
-   ============================================================ */
-function loadDb() {
-  try { return JSON.parse(localStorage.getItem(LS_DB) || '[]'); } catch (e) { return []; }
-}
-function saveDb(arr) { localStorage.setItem(LS_DB, JSON.stringify(arr)); }
-function addToDb(f) {
-  const db = loadDb();
-  db.push({
-    id: f.id, nome: (f.nome || '').toUpperCase(), secao: f.secao, matricula: f.matricula,
-    data: f.data, entrada: f.entrada, saida: f.saida, horas: calcHoras(f.entrada, f.saida),
-    tipos: f.tipos.slice(), hora_extra: f.horaExtra, observacao: f.observacao,
-    arquivo: signedFilename(f), origem: 'assinada-app', assinada: true,
-    assinada_em: new Date().toISOString(),
+/* ---------- Navegação ---------- */
+function showView(v) { $$('.view').forEach(x => x.classList.toggle('active', x.id === 'view-' + v)); window.scrollTo(0, 0); }
+function setupSubtabs() {
+  $$('.subtab').forEach(t => t.onclick = () => {
+    const group = t.closest('.subtabs').dataset.group;
+    $$(`.subtabs[data-group="${group}"] .subtab`).forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    const parent = t.closest('.view');
+    $$('.subview', parent).forEach(s => s.classList.remove('active'));
+    $('#' + group + '-' + t.dataset.sub, parent).classList.add('active');
+    if (t.dataset.sub === 'minhas') carregarMinhasFichas();
+    if (t.dataset.sub === 'inbox') carregarInbox();
+    if (t.dataset.sub === 'assinadas') carregarAssinadas();
+    if (t.dataset.sub === 'painel') carregarPainel();
   });
-  saveDb(db);
-}
-function allRecords() {
-  const seed = (window.HISTORICO_SEED || []).map(r => ({ ...r }));
-  return seed.concat(loadDb());
 }
 
 /* ============================================================
-   Painel
+   Autenticação
    ============================================================ */
-let painelSort = { key: 'data', dir: -1 };
-function renderPainel() {
-  const recs = allRecords();
-  // KPIs
+async function initAuth() {
+  try {
+    sb.auth.onAuthStateChange((_event, session) => { if (session) aoLogar(session); });
+    const { data } = await sb.auth.getSession();
+    if (data && data.session) aoLogar(data.session);
+    else showView('login');
+  } catch (e) { console.warn('auth init', e); showView('login'); }
+}
+async function enviarMagicLink() {
+  const email = $('#loginEmail').value.trim().toLowerCase();
+  if (!email || !email.includes('@')) { toast('Digite um e-mail válido.', 'err'); return; }
+  if (!email.endsWith(DOMINIO)) { toast('Use seu e-mail ' + DOMINIO, 'err'); return; }
+  $('#btnMagic').disabled = true; $('#loginMsg').textContent = 'Enviando…';
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+  $('#btnMagic').disabled = false;
+  if (error) { $('#loginMsg').textContent = ''; toast('Erro: ' + error.message, 'err'); return; }
+  $('#loginMsg').innerHTML = '✅ Link enviado para <b>' + esc(email) + '</b>. Abra o e-mail e toque no link para entrar.';
+}
+async function logout() { await sb.auth.signOut(); location.reload(); }
+
+async function aoLogar(session) {
+  const uid = session.user.id;
+  let { data, error } = await sb.from('profiles').select('*').eq('id', uid).single();
+  if (error && error.code !== 'PGRST116') { toast('Erro ao carregar perfil: ' + error.message, 'err'); }
+  if (!data) { // fallback caso o gatilho não tenha criado
+    await sb.from('profiles').insert({ id: uid, email: session.user.email }).select().single().then(r => data = r.data);
+  }
+  profile = data || { id: uid, email: session.user.email, papel: 'colaborador' };
+  $('#hdrRight').hidden = false;
+  $('#userChip').textContent = (profile.nome ? firstName(profile.nome) : profile.email) + (profile.papel === 'gestor' ? ' · Gestor' : '');
+  if (!profile.nome || !profile.assinatura) { irOnboarding(); }
+  else rotearPorPapel();
+}
+function rotearPorPapel() {
+  if (profile.papel === 'gestor') { $('#hdrsub').textContent = 'Gestor'; showView('gestor'); carregarInbox(); }
+  else { $('#hdrsub').textContent = 'Colaborador'; showView('colab'); renderFormFicha(); }
+}
+
+/* ============================================================
+   Perfil / Onboarding
+   ============================================================ */
+function irOnboarding() {
+  showView('onboarding'); initSigPads(); bindSigUpload('obSigFile', 'obSig');
+  $('#obNome').value = profile.nome || ''; $('#obMat').value = profile.matricula || ''; $('#obSecao').value = profile.secao || 'SUPRIMENTOS';
+  if (profile.assinatura) sigPads.obSig.load(profile.assinatura);
+}
+async function salvarPerfil(padId, nome, mat, secao, entaoRotear) {
+  nome = (nome || '').trim().toUpperCase();
+  const assinatura = sigPads[padId] && !sigPads[padId].isEmpty() ? sigPads[padId].dataURL() : (profile.assinatura || '');
+  if (!nome) { toast('Preencha seu nome.', 'err'); return; }
+  if (!assinatura) { toast('Desenhe ou envie sua assinatura.', 'err'); return; }
+  const patch = { nome, matricula: (mat || '').trim(), secao: (secao || '').trim() || 'SUPRIMENTOS', assinatura };
+  const { error } = await sb.from('profiles').update(patch).eq('id', profile.id);
+  if (error) { toast('Erro ao salvar: ' + error.message, 'err'); return; }
+  Object.assign(profile, patch);
+  toast('Cadastro salvo ✓', 'ok');
+  $('#userChip').textContent = firstName(profile.nome) + (profile.papel === 'gestor' ? ' · Gestor' : '');
+  if (entaoRotear) rotearPorPapel();
+}
+
+/* ============================================================
+   Colaborador — nova ficha
+   ============================================================ */
+let novaSel = { comunicado: [], tipos: [] };
+function renderFormFicha(base) {
+  novaSel = { comunicado: base ? [...(base.comunicado || [])] : [], tipos: base ? [...(base.tipos || [])] : [] };
+  const f = $('#formFicha');
+  f.innerHTML = `
+    <p class="sub" style="margin-top:0">Olá, <b>${esc(firstName(profile.nome))}</b>. Preencha e envie — sua assinatura já entra na ficha.</p>
+    <label class="lbl">Comunicado de</label>
+    <div class="chips" id="chComunicado"></div>
+    <label class="lbl">Tipo</label>
+    <div class="chips" id="chTipos"></div>
+    <div class="row2">
+      <div class="field"><label>Data do evento</label><input type="date" id="fData" value="${base ? '' : ''}"></div>
+      <div class="field" id="wrapEntrada"><label>Entrada</label><input type="time" id="fEntrada" value="${esc(base?.entrada || '')}"></div>
+    </div>
+    <div class="row2">
+      <div class="field" id="wrapSaida"><label>Saída</label><input type="time" id="fSaida" value="${esc(base?.saida || '')}"></div>
+      <div class="field"><label>&nbsp;</label><div class="mut" id="horasCalc">—</div></div>
+    </div>
+    <div class="field"><label>Observação</label><textarea id="fObs" rows="2" placeholder="Motivo / detalhe">${esc(base?.observacao || '')}</textarea></div>
+    <div id="wrapFalta" hidden>
+      <div class="field"><label>Falta(s) no(s) dia(s)</label><input id="fFaltas" value="${esc(base?.faltas || '')}"></div>
+      <div class="field"><label>Motivo da falta/atraso</label><input id="fMotivo" value="${esc(base?.motivo || '')}"></div>
+    </div>
+    <div class="warn-note he" id="heNota" ${novaSel.tipos.includes(HORA_EXTRA) ? '' : 'hidden'}>⚠ Hora extra: o gestor vai revisar antes de aprovar.</div>
+    <button class="btn primary block" id="btnEnviarFicha">📤 Enviar ficha para o gestor</button>
+  `;
+  const chC = $('#chComunicado');
+  COMUNICADOS.forEach(c => { const el = chip(c === 'SAIDA' ? 'SAÍDA' : c, novaSel.comunicado.includes(c)); el.onclick = () => { toggle(novaSel.comunicado, c); el.classList.toggle('on'); $('#wrapFalta').hidden = !novaSel.comunicado.includes('FALTA'); }; chC.appendChild(el); });
+  const chT = $('#chTipos');
+  TIPOS.forEach(t => { const el = chip(t, novaSel.tipos.includes(t), t === HORA_EXTRA); el.onclick = () => { toggle(novaSel.tipos, t); el.classList.toggle('on'); $('#heNota').hidden = !novaSel.tipos.includes(HORA_EXTRA); }; chT.appendChild(el); });
+  const upd = () => { const h = calcHoras($('#fEntrada').value, $('#fSaida').value); $('#horasCalc').textContent = h != null ? h.toFixed(2) + ' h' : '—'; };
+  $('#fEntrada').oninput = upd; $('#fSaida').oninput = upd;
+  $('#wrapFalta').hidden = !novaSel.comunicado.includes('FALTA');
+  $('#btnEnviarFicha').onclick = enviarFicha;
+}
+function chip(txt, on, he) { const s = document.createElement('span'); s.className = 'chip' + (on ? ' on' : '') + (he ? ' he' : ''); s.textContent = txt; return s; }
+function toggle(arr, v) { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); }
+
+async function enviarFicha() {
+  const data = dateInputBR($('#fData').value);
+  if (!data) { toast('Escolha a data do evento.', 'err'); return; }
+  if (!novaSel.comunicado.length) { toast('Marque Entrada, Saída ou Falta.', 'err'); return; }
+  const ficha = {
+    colaborador_id: profile.id, nome: profile.nome, secao: profile.secao, matricula: profile.matricula,
+    data, comunicado: novaSel.comunicado, tipos: novaSel.tipos,
+    entrada: $('#fEntrada').value, saida: $('#fSaida').value,
+    faltas: $('#fFaltas') ? $('#fFaltas').value : '', motivo: $('#fMotivo') ? $('#fMotivo').value : '',
+    observacao: $('#fObs').value, hora_extra: novaSel.tipos.includes(HORA_EXTRA),
+    status: 'enviada', assinatura_colaborador: profile.assinatura,
+  };
+  $('#btnEnviarFicha').disabled = true;
+  const { error } = await sb.from('fichas').insert(ficha);
+  $('#btnEnviarFicha').disabled = false;
+  if (error) { toast('Erro ao enviar: ' + error.message, 'err'); return; }
+  toast('Ficha enviada ao gestor ✓', 'ok');
+  renderFormFicha();
+}
+
+/* ---------- Minhas fichas (colaborador) ---------- */
+async function carregarMinhasFichas() {
+  const box = $('#minhasFichas'); box.innerHTML = '<p class="mut">Carregando…</p>';
+  const { data, error } = await sb.from('fichas').select('*').eq('colaborador_id', profile.id).order('created_at', { ascending: false });
+  if (error) { box.innerHTML = '<p class="mut">Erro: ' + esc(error.message) + '</p>'; return; }
+  if (!data.length) { box.innerHTML = '<p class="empty">Você ainda não enviou fichas.</p>'; return; }
+  box.innerHTML = '';
+  data.forEach(f => box.appendChild(cardFicha(f, 'colab')));
+}
+
+/* ============================================================
+   Gestor — caixa de entrada / assinar / painel
+   ============================================================ */
+async function carregarInbox() {
+  const box = $('#inboxLista'); box.innerHTML = '<p class="mut">Carregando…</p>';
+  const { data, error } = await sb.from('fichas').select('*').eq('status', 'enviada').order('created_at', { ascending: true });
+  if (error) { box.innerHTML = '<p class="mut">Erro: ' + esc(error.message) + '</p>'; return; }
+  $('#inboxCount').textContent = data.length || '';
+  if (!data.length) { box.innerHTML = '<p class="empty">Nenhuma ficha pendente. 🎉</p>'; return; }
+  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'inbox')));
+}
+async function carregarAssinadas() {
+  const box = $('#assinadasLista'); box.innerHTML = '<p class="mut">Carregando…</p>';
+  const { data, error } = await sb.from('fichas').select('*').eq('status', 'assinada').order('assinada_em', { ascending: false });
+  if (error) { box.innerHTML = '<p class="mut">Erro: ' + esc(error.message) + '</p>'; return; }
+  if (!data.length) { box.innerHTML = '<p class="empty">Nenhuma ficha assinada ainda.</p>'; return; }
+  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'assinada')));
+}
+
+async function assinarFicha(f, cardEl) {
+  if (!profile.assinatura) { toast('Cadastre sua assinatura em ⚙️ primeiro.', 'err'); return; }
+  const patch = { status: 'assinada', assinatura_gestor: profile.assinatura, assinada_em: new Date().toISOString() };
+  const { error } = await sb.from('fichas').update(patch).eq('id', f.id);
+  if (error) { toast('Erro ao assinar: ' + error.message, 'err'); return; }
+  Object.assign(f, patch);
+  toast(`Ficha de ${firstName(f.nome)} assinada ✓`, 'ok');
+  const novo = cardFicha(f, 'assinada'); cardEl.replaceWith(novo);
+  const c = $('#inboxCount'); const n = Math.max(0, (+c.textContent || 1) - 1); c.textContent = n || '';
+}
+
+async function baixarFicha(f, comGestor) {
+  const bytes = await gerarFichaPDF(f, f.assinatura_colaborador, comGestor ? f.assinatura_gestor : '');
+  baixarBytes(bytes, nomeArquivo(f));
+  return bytes;
+}
+async function enviarDHO(f) {
+  const bytes = await gerarFichaPDF(f, f.assinatura_colaborador, f.assinatura_gestor);
+  const nome = nomeArquivo(f);
+  const assunto = `Ficha Mod. 012 - ${f.nome} - ${normDate(f.data)}`;
+  try {
+    const file = new File([bytes], nome, { type: 'application/pdf' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: assunto, text: assunto });
+      return;
+    }
+  } catch (e) { /* cai no fallback */ }
+  baixarBytes(bytes, nome);
+  const body = encodeURIComponent(`Segue a ficha assinada de ${f.nome} (${normDate(f.data)}).\n\nO PDF foi baixado no aparelho — anexe-o a este e-mail.`);
+  location.href = `mailto:${DHO_EMAIL}?subject=${encodeURIComponent(assunto)}&body=${body}`;
+}
+
+/* ---------- Cartão de ficha ---------- */
+function cardFicha(f, modo) {
+  const card = document.createElement('div');
+  card.className = 'fcard' + (f.hora_extra ? ' he' : '');
+  const horas = calcHoras(f.entrada, f.saida);
+  const tp = (f.tipos || []).map(t => `<span class="pill ${t === HORA_EXTRA ? 'he' : ''}">${esc(t)}</span>`).join(' ') || '';
+  const st = { enviada: '<span class="badge norm">enviada</span>', assinada: '<span class="badge ok">✓ assinada</span>' }[f.status] || '';
+  const heB = f.hora_extra ? '<span class="badge he">⚠ hora extra</span>' : '';
+  card.innerHTML = `
+    <div class="fcard-head">
+      <div><div class="nm">${esc(f.nome || '')}</div>
+      <div class="meta">${esc(normDate(f.data))} · ${esc((f.comunicado || []).join('/').replace('SAIDA', 'SAÍDA'))} ${f.entrada ? '· ent ' + esc(f.entrada) : ''} ${f.saida ? '· saí ' + esc(f.saida) : ''} ${horas != null ? '· ' + horas.toFixed(2) + 'h' : ''}</div></div>
+      <div class="badges">${modo === 'inbox' ? heB : (st + ' ' + heB)}</div>
+    </div>
+    ${tp ? `<div class="fcard-tipos">${tp}</div>` : ''}
+    ${f.observacao ? `<div class="fcard-obs">${esc(f.observacao)}</div>` : ''}
+    <div class="fcard-actions"></div>`;
+  const act = $('.fcard-actions', card);
+  const addBtn = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn ' + cls; b.textContent = label; b.onclick = () => fn(b); act.appendChild(b); };
+  if (modo === 'inbox') {
+    addBtn(f.hora_extra ? '✍️ Revisar e assinar' : '✍️ Assinar', 'primary', () => assinarFicha(f, card));
+    addBtn('👁 Ver PDF', 'ghost small', async () => { await baixarFicha(f, false); });
+  } else if (modo === 'assinada') {
+    addBtn('📧 Enviar ao DHO', 'ok', () => enviarDHO(f));
+    addBtn('⬇️ Baixar', 'ghost small', () => baixarFicha(f, true));
+  } else if (modo === 'colab') {
+    addBtn('⬇️ Baixar', 'ghost small', () => baixarFicha(f, f.status === 'assinada'));
+    addBtn('📄 Duplicar', 'ghost small', () => { $$('.subtabs[data-group=colab] .subtab')[0].click(); renderFormFicha(f); });
+  }
+  return card;
+}
+
+/* ---------- Painel (gestor) ---------- */
+let _painelDados = [];
+async function carregarPainel() {
+  const { data, error } = await sb.from('fichas').select('*').order('created_at', { ascending: false });
+  if (error) { toast('Erro no painel: ' + error.message, 'err'); return; }
+  _painelDados = data || [];
+  const recs = _painelDados;
   const pessoas = new Set(recs.map(r => firstName(r.nome)));
-  const totalHoras = recs.reduce((s, r) => s + (r.horas || 0), 0);
+  const totalHoras = recs.reduce((s, r) => s + (calcHoras(r.entrada, r.saida) || 0), 0);
   const he = recs.filter(r => r.hora_extra).length;
   $('#kpis').innerHTML = `
-    <div class="kpi"><div class="v">${recs.length}</div><div class="k">Fichas registradas</div></div>
+    <div class="kpi"><div class="v">${recs.length}</div><div class="k">Fichas</div></div>
     <div class="kpi"><div class="v">${pessoas.size}</div><div class="k">Colaboradores</div></div>
-    <div class="kpi"><div class="v">${totalHoras.toFixed(1)}h</div><div class="k">Horas contabilizadas</div></div>
-    <div class="kpi he"><div class="v">${he}</div><div class="k">Fichas com hora extra</div></div>
-  `;
-
-  // barras por pessoa (horas; se sem horas, conta fichas)
+    <div class="kpi"><div class="v">${totalHoras.toFixed(1)}h</div><div class="k">Horas</div></div>
+    <div class="kpi he"><div class="v">${he}</div><div class="k">Hora extra</div></div>`;
   const byP = {};
-  for (const r of recs) { const k = firstName(r.nome) || '—'; byP[k] = byP[k] || { horas: 0, n: 0 }; byP[k].horas += (r.horas || 0); byP[k].n++; }
-  const pRows = Object.entries(byP).sort((a, b) => (b[1].horas - a[1].horas) || (b[1].n - a[1].n));
-  const maxH = Math.max(1, ...pRows.map(r => r[1].horas || r[1].n));
-  $('#barsPessoa').innerHTML = pRows.map(([k, v]) => {
-    const val = v.horas > 0 ? v.horas : v.n;
-    const label = v.horas > 0 ? `${v.horas.toFixed(1)}h` : `${v.n} ficha(s)`;
-    return `<div class="bar-row"><div class="name">${esc(k)}</div><div class="bar-track"><div class="bar-fill" style="width:${(val / maxH * 100).toFixed(1)}%"></div></div><div class="val">${label}</div></div>`;
-  }).join('');
-
-  // barras por tipo
-  const byT = {};
-  for (const r of recs) for (const t of (r.tipos && r.tipos.length ? r.tipos : ['(sem tipo)'])) byT[t] = (byT[t] || 0) + 1;
-  const tRows = Object.entries(byT).sort((a, b) => b[1] - a[1]);
-  const maxT = Math.max(1, ...tRows.map(r => r[1]));
-  $('#barsTipo').innerHTML = tRows.map(([k, v]) =>
-    `<div class="bar-row"><div class="name">${esc(k)}</div><div class="bar-track"><div class="bar-fill" style="width:${(v / maxT * 100).toFixed(1)}%"></div></div><div class="val">${v}</div></div>`
-  ).join('');
-
-  // filtros
-  const selP = $('#fPessoa'), selT = $('#fTipo');
-  const curP = selP.value, curT = selT.value;
-  selP.innerHTML = '<option value="">Todos os colaboradores</option>' + [...pessoas].sort().map(p => `<option ${p === curP ? 'selected' : ''}>${esc(p)}</option>`).join('');
-  const tipos = [...new Set(recs.flatMap(r => r.tipos || []))].sort();
-  selT.innerHTML = '<option value="">Todos os tipos</option>' + tipos.map(t => `<option ${t === curT ? 'selected' : ''}>${esc(t)}</option>`).join('');
-
-  renderTable();
+  recs.forEach(r => { const k = firstName(r.nome) || '—'; byP[k] = (byP[k] || 0) + (calcHoras(r.entrada, r.saida) || 0); });
+  const rows = Object.entries(byP).sort((a, b) => b[1] - a[1]); const max = Math.max(1, ...rows.map(r => r[1]));
+  $('#barsPessoa').innerHTML = rows.map(([k, v]) => `<div class="bar-row"><div class="name">${esc(k)}</div><div class="bar-track"><div class="bar-fill" style="width:${(v / max * 100).toFixed(0)}%"></div></div><div class="val">${v.toFixed(1)}h</div></div>`).join('') || '<p class="mut">Sem dados.</p>';
+  renderTabelaPainel();
 }
-
-function filteredRecords() {
-  let recs = allRecords();
+function renderTabelaPainel() {
   const q = norm($('#fSearch').value);
-  const p = $('#fPessoa').value, t = $('#fTipo').value, he = $('#fHE').value;
-  if (q) recs = recs.filter(r => norm(`${r.nome} ${r.data} ${r.secao} ${r.observacao} ${(r.tipos || []).join(' ')}`).includes(q));
-  if (p) recs = recs.filter(r => firstName(r.nome) === p);
-  if (t) recs = recs.filter(r => (r.tipos || []).includes(t));
-  if (he === '1') recs = recs.filter(r => r.hora_extra);
-  if (he === '0') recs = recs.filter(r => !r.hora_extra);
-  return recs;
-}
-
-function sortKey(r, k) {
-  if (k === 'data') { const m = (r.data || '').match(/(\d{1,2})[.\/\-](\d{1,2})[.\/\-](\d{2,4})/); if (!m) return 0; let [, d, mo, y] = m; if (y.length === 2) y = '20' + y; return +`${y}${mo.padStart(2, '0')}${d.padStart(2, '0')}`; }
-  if (k === 'horas') return r.horas || 0;
-  if (k === 'tipo') return (r.tipos || []).join(',');
-  return norm(r[k] || '');
-}
-function renderTable() {
-  let recs = filteredRecords();
-  recs.sort((a, b) => { const ka = sortKey(a, painelSort.key), kb = sortKey(b, painelSort.key); return (ka < kb ? -1 : ka > kb ? 1 : 0) * painelSort.dir; });
+  let recs = _painelDados;
+  if (q) recs = recs.filter(r => norm(`${r.nome} ${r.data} ${(r.tipos || []).join(' ')} ${r.observacao}`).includes(q));
   $('#tblBody').innerHTML = recs.map(r => {
-    const tp = (r.tipos || []).map(t => `<span class="pill ${t === HORA_EXTRA ? 'he' : ''}">${esc(t)}</span>`).join(' ') || '<span class="pill">—</span>';
-    const orig = r.origem === 'assinada-app' ? '<span class="pill">assinada aqui</span>' : '<span class="pill hist">histórico</span>';
-    return `<tr>
-      <td>${esc(normDate(r.data) || '—')}</td>
-      <td>${esc(r.nome || '—')}</td>
-      <td>${esc(r.secao || '')}</td>
-      <td>${tp}</td>
-      <td>${esc(r.entrada || '')}</td>
-      <td>${esc(r.saida || '')}</td>
-      <td>${r.horas != null ? r.horas.toFixed(2) + 'h' : '—'}</td>
-      <td class="obs">${esc(r.observacao || '')}</td>
-      <td>${orig}</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="9" class="empty">Nenhum registro encontrado.</td></tr>';
+    const h = calcHoras(r.entrada, r.saida);
+    const st = r.status === 'assinada' ? '<span class="pill ok">assinada</span>' : '<span class="pill">enviada</span>';
+    return `<tr><td>${esc(normDate(r.data))}</td><td>${esc(r.nome || '')}</td><td>${esc((r.tipos || []).join(', '))}${r.hora_extra ? ' ⚠' : ''}</td><td>${esc(r.entrada || '')}</td><td>${esc(r.saida || '')}</td><td>${h != null ? h.toFixed(2) : '—'}</td><td>${st}</td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty">Nada encontrado.</td></tr>';
 }
-
 function exportCsv() {
-  const recs = filteredRecords();
-  const head = ['Data', 'Colaborador', 'Secao', 'Matricula', 'Tipos', 'HoraExtra', 'Entrada', 'Saida', 'Horas', 'Observacao', 'Origem'];
-  const rows = recs.map(r => [normDate(r.data), r.nome, r.secao, r.matricula, (r.tipos || []).join(' | '), r.hora_extra ? 'SIM' : 'nao', r.entrada, r.saida, r.horas ?? '', (r.observacao || '').replace(/\n/g, ' '), r.origem]);
+  const head = ['Data', 'Colaborador', 'Secao', 'Matricula', 'Tipos', 'HoraExtra', 'Entrada', 'Saida', 'Horas', 'Observacao', 'Status'];
+  const rows = _painelDados.map(r => [normDate(r.data), r.nome, r.secao, r.matricula, (r.tipos || []).join(' | '), r.hora_extra ? 'SIM' : 'nao', r.entrada, r.saida, calcHoras(r.entrada, r.saida) ?? '', (r.observacao || '').replace(/\n/g, ' '), r.status]);
   const csv = [head, ...rows].map(row => row.map(c => `"${(c ?? '').toString().replace(/"/g, '""')}"`).join(';')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `horas-selgron-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click(); setTimeout(() => URL.revokeObjectURL(url), 3000);
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `horas-selgron-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
 /* ============================================================
-   Configurações
+   Config
    ============================================================ */
-function atualizaSigPreview() {
-  const img = $('#sigPreview');
-  if (temAssinatura()) { img.src = signatureDataUrl; img.style.display = ''; }
-  else { img.removeAttribute('src'); img.style.display = 'none'; }
-}
-function setupConfig() {
-  atualizaSigPreview();
-  $('#btnSigUpload').onclick = () => $('#sigInput').click();
-  $('#sigInput').onchange = () => {
-    const file = $('#sigInput').files[0]; if (!file) return;
-    const rd = new FileReader();
-    rd.onload = () => { signatureDataUrl = rd.result; localStorage.setItem(LS_SIG, signatureDataUrl); sigDims = null; atualizaSigPreview(); ensureSigDims(); toast('Assinatura salva ✓', 'ok'); renderCards(); };
-    rd.readAsDataURL(file);
-  };
-  $('#btnSigReset').onclick = () => { signatureDataUrl = ''; localStorage.removeItem(LS_SIG); sigDims = null; atualizaSigPreview(); toast('Assinatura removida'); renderCards(); };
-
-  $('#btnExportDb').onclick = () => {
-    const blob = new Blob([JSON.stringify(loadDb(), null, 1)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'base-fichas-assinadas.json'; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 3000);
-  };
-  $('#btnImportDb').onclick = () => $('#dbInput').click();
-  $('#dbInput').onchange = () => {
-    const file = $('#dbInput').files[0]; if (!file) return;
-    const rd = new FileReader();
-    rd.onload = () => { try { const arr = JSON.parse(rd.result); if (!Array.isArray(arr)) throw 0; const db = loadDb().concat(arr); saveDb(db); renderPainel(); toast(`${arr.length} registro(s) importados ✓`, 'ok'); } catch (e) { toast('JSON inválido', 'err'); } };
-    rd.readAsText(file);
-  };
-  $('#btnResetDb').onclick = () => { if (confirm('Apagar toda a base de horas deste navegador? (Faça um Exportar antes se quiser backup.)')) { localStorage.removeItem(LS_DB); renderPainel(); toast('Base apagada deste navegador'); } };
+function irConfig() {
+  showView('config'); initSigPads(); bindSigUpload('cfSigFile', 'cfSig');
+  $('#cfNome').value = profile.nome || ''; $('#cfMat').value = profile.matricula || ''; $('#cfSecao').value = profile.secao || '';
+  sigPads.cfSig.clear(); if (profile.assinatura) sigPads.cfSig.load(profile.assinatura);
 }
 
 /* ============================================================
-   Navegação + init
+   Init
    ============================================================ */
-function mostraView(nome) {
-  $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.view === nome));
-  $$('.view').forEach(x => x.classList.remove('active'));
-  $('#view-' + nome).classList.add('active');
-  if (nome === 'painel') renderPainel();
-}
-function setupTabs() { $$('.tab').forEach(t => t.onclick = () => mostraView(t.dataset.view)); }
-function irParaConfig() { mostraView('config'); }
-
 function init() {
-  setupTabs();
-  setupDropzone();
-  setupConfig();
-  ensureSigDims();
-  $('#btnClear').onclick = () => { fichas = []; renderCards(); };
-  $('#btnSignAll').onclick = signAllNoHE;
+  setupSubtabs();
+  $('#btnMagic').onclick = enviarMagicLink;
+  $('#loginEmail').addEventListener('keydown', e => { if (e.key === 'Enter') enviarMagicLink(); });
+  $('#btnLogout').onclick = logout;
+  $('#btnConfig').onclick = irConfig;
+  $('#btnBack').onclick = rotearPorPapel;
+  $('#btnSaveProfile').onclick = () => salvarPerfil('obSig', $('#obNome').value, $('#obMat').value, $('#obSecao').value, true);
+  $('#btnSaveConfig').onclick = () => salvarPerfil('cfSig', $('#cfNome').value, $('#cfMat').value, $('#cfSecao').value, false);
   $('#btnCsv').onclick = exportCsv;
-  ['#fSearch', '#fPessoa', '#fTipo', '#fHE'].forEach(s => $(s).addEventListener('input', renderTable));
-  $$('#tbl th[data-sort]').forEach(th => th.onclick = () => {
-    const k = th.dataset.sort;
-    painelSort.dir = (painelSort.key === k) ? -painelSort.dir : 1;
-    painelSort.key = k; renderTable();
-  });
-  renderPainel();
-  // primeiro uso: sem assinatura carregada → orienta a configurar
-  if (!temAssinatura()) {
-    const b = $('#firstRun');
-    if (b) b.hidden = false;
-  }
+  $('#fSearch').addEventListener('input', renderTabelaPainel);
+  initAuth();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
 }
 document.addEventListener('DOMContentLoaded', init);

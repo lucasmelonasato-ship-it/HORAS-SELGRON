@@ -195,3 +195,51 @@ td.obs { white-space: normal; max-width: 280px; color: var(--muted); }
   .cards { grid-template-columns: 1fr; }
   .bar-row { grid-template-columns: 110px 1fr auto; }
 }
+
+/* ===================== APP MULTIUSUÁRIO (mobile-first) ===================== */
+.hdr-right { margin-left:auto; display:flex; align-items:center; gap:8px; }
+.userchip { font-size:13px; color:var(--muted); max-width:46vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.logo .mark.big, .mark.big { width:64px; height:64px; border-radius:16px; font-size:34px; margin:0 auto 6px; }
+main { max-width:720px; }
+.row2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.mut { color:var(--muted); font-size:13px; }
+.lbl { display:block; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin:14px 0 6px; }
+
+/* auth */
+.auth-card { max-width:380px; margin:6vh auto 0; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:26px 22px; text-align:center; box-shadow:var(--shadow); }
+.auth-card h2 { margin:4px 0 6px; }
+.auth-card input { width:100%; margin:14px 0 10px; padding:13px; font-size:16px; background:var(--surface-2); border:1px solid var(--border); border-radius:10px; color:var(--text); }
+.btn.block { width:100%; justify-content:center; padding:13px; font-size:15px; }
+.hint { font-size:13px; color:var(--muted); margin-top:12px; line-height:1.5; }
+
+/* subtabs */
+.subtabs { display:flex; gap:6px; margin-bottom:16px; overflow-x:auto; }
+.subtab { flex:0 0 auto; background:var(--surface-2); border:1px solid var(--border); color:var(--muted); padding:9px 15px; border-radius:999px; font-weight:650; font-size:14px; cursor:pointer; }
+.subtab.active { background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#241a02; border-color:transparent; }
+.subtab .count { background:var(--danger); color:#fff; border-radius:999px; padding:0 7px; font-size:11px; margin-left:4px; }
+.subview { display:none; } .subview.active { display:block; }
+
+/* chips (form) */
+.chips { display:flex; flex-wrap:wrap; gap:8px; }
+.chips .chip { padding:9px 14px; font-size:14px; }
+
+/* signature pad */
+.sigpad-wrap { position:relative; }
+.sigpad { width:100%; height:150px; background:#fff; border:1px solid var(--border); border-radius:10px; touch-action:none; display:block; }
+.sigclear { position:absolute; top:8px; right:8px; }
+.linklike { color:var(--accent); cursor:pointer; text-decoration:underline; }
+
+/* lista de fichas */
+.lista { display:flex; flex-direction:column; gap:12px; }
+.fcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+.fcard.he { border-color:#6b3a1f; }
+.fcard-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+.fcard-head .nm { font-weight:800; }
+.fcard-head .meta { color:var(--muted); font-size:12.5px; margin-top:2px; }
+.badges { display:flex; flex-direction:column; gap:4px; align-items:flex-end; }
+.fcard-tipos { display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+.fcard-obs { margin-top:8px; font-size:13px; color:var(--muted); background:var(--surface-2); padding:8px 10px; border-radius:8px; }
+.fcard-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.pill.ok { background:var(--ok-bg); color:var(--ok); }
+
+@media (max-width:520px){ .row2 { grid-template-columns:1fr; } .tabs { display:none; } }
