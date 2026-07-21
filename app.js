@@ -348,7 +348,6 @@ function cardFicha(f, modo) {
 /* ---------- Painel (gestor) ---------- */
 let _painelDados = [];
 async function carregarPainel() {
-  if (window.__DEMO) { renderPainel(); return; }
   const { data, error } = await sb.from('fichas').select('*').order('created_at', { ascending: false });
   if (error) { toast('Erro no painel: ' + error.message, 'err'); return; }
   _painelDados = data || [];
