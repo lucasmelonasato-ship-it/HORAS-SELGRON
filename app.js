@@ -481,7 +481,9 @@ function atualizarBarraLote() {
   document.body.classList.toggle('com-lote', sel.length > 0);
   $('#loteN').textContent = `${sel.length} selecionada${sel.length > 1 ? 's' : ''}`;
   $('#btnLoteAssinar').textContent = `✍️ Assinar (${nAss})`; $('#btnLoteAssinar').disabled = !nAss;
-  $('#btnLoteBaixar').textContent = `⬇️ Baixar (${nBai})`; $('#btnLoteBaixar').disabled = !nBai;
+  $('#btnLoteBaixar').textContent = `⬇️ PDFs (${nBai})`; $('#btnLoteBaixar').disabled = !nBai;
+  $('#btnLoteEmail').hidden = !ehComputador();   // no celular o e-mail é um por vez (Mail)
+  $('#btnLoteEmail').textContent = `📧 E-mails (${nBai})`; $('#btnLoteEmail').disabled = !nBai;
   $$('.selall').forEach(s => { const cb = $('input', s); cb.checked = s._fichas.length > 0 && s._fichas.every(f => selecao.has(f.id)); });
 }
 function trocarCard(f) {
@@ -530,6 +532,28 @@ async function baixarLote() {
     }
     toast(`${alvo.length} PDF${alvo.length > 1 ? 's baixados' : ' baixado'} ✓`, 'ok');
   }
+  atualizarBarraLote();
+}
+/* E-mails em lote (PC): um e-mail pronto (.eml) por ficha, com destino/assunto do tipo e o PDF anexado */
+async function emailsLote() {
+  const alvo = selecionadas().filter(f => f.status === 'assinada' || f.status === 'arquivada');
+  if (!alvo.length) return;
+  const he = alvo.filter(ehHoraExtra).length;
+  if (!confirm(`Gerar ${alvo.length} e-mail${alvo.length > 1 ? 's' : ''} pronto${alvo.length > 1 ? 's' : ''} (1 por ficha, com o PDF anexado)?\n\n` +
+    `• ${alvo.length - he} para jornadas@ (DHO)\n• ${he} de hora extra para raquel.l@ e portaria@`)) return;
+  const btn = $('#btnLoteEmail'); btn.disabled = true; btn.textContent = `Gerando ${alvo.length}…`;
+  for (const f of alvo) {
+    const bytes = await gerarFichaPDF(f, f.assinatura_colaborador, f.assinatura_gestor);
+    baixarEml(montarEmail(f), bytes, nomeArquivo(f));
+    await new Promise(r => setTimeout(r, 450));
+  }
+  const pend = alvo.filter(f => f.status === 'assinada');
+  if (pend.length) {
+    const { error } = await sb.from('fichas').update({ status: 'arquivada' }).in('id', pend.map(f => f.id));
+    if (error) toast('E-mails gerados, mas houve erro ao registrar No DHO: ' + error.message, 'err');
+    else pend.forEach(f => { f.status = 'arquivada'; trocarCard(f); });
+  }
+  toast(`${alvo.length} e-mail${alvo.length > 1 ? 's prontos baixados' : ' pronto baixado'} ✓ — abra cada um → Ctrl+E → Enviar`, 'ok');
   atualizarBarraLote();
 }
 async function baixarEmSequencia(arqs) {
@@ -613,6 +637,7 @@ function init() {
   $('#btnCsv').onclick = exportCsv;
   $('#btnLoteAssinar').onclick = assinarLote;
   $('#btnLoteBaixar').onclick = baixarLote;
+  $('#btnLoteEmail').onclick = emailsLote;
   $('#btnLoteLimpar').onclick = limparSelecao;
   $('#fSearch').addEventListener('input', renderTabelaPainel);
   initAuth();
