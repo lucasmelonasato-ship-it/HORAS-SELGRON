@@ -36,3 +36,8 @@ vendor/               pdf-lib + supabase-js (offline)
 manifest.webmanifest, sw.js   PWA (instalável, funciona offline no que dá)
 docs/supabase-setup.sql       Script do banco
 ```
+
+## Publicar uma versão nova
+Antes de cada publicação, rode `tools/versao.sh` (atualiza `APP_VERSION` em `app.js`
+e o `version.json`). Quem estiver com o app aberto vê o aviso
+"Tem uma versão nova → Atualizar agora" — sem precisar de Ctrl+Shift+R.

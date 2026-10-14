@@ -243,3 +243,9 @@ tbody tr:hover { background: var(--brand-soft); }
 body.com-lote .toast-wrap { bottom: 118px; }
 body.com-lote main { padding-bottom: 140px; }
 .subtab .count:empty { display: none; }
+
+/* aviso de versão nova */
+.novaversao { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 80; width: min(94vw, 560px);
+  background: var(--brand-soft); border: 1.5px solid var(--brand); color: var(--text); border-radius: 14px;
+  padding: 10px 12px 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  box-shadow: var(--shadow-lg); font-size: 14px; animation: slideup .25s; }

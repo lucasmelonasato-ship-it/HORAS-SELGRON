@@ -4,6 +4,7 @@
 'use strict';
 
 /* ---------- Configuração ---------- */
+const APP_VERSION = '2026.10.14-2016';   // atualizado por tools/versao.sh a cada publicação (igual ao version.json)
 const SUPA_URL = 'https://xewxckloxgjrffxslasq.supabase.co';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhld3hja2xveGdqcmZmeHNsYXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1ODYzMTMsImV4cCI6MjEwMDE2MjMxM30.ALcLipiKYTGkUeN70KEIPL5sAZuS6LvNYnr8C9Yko4E';
 const DHO_EMAIL = 'jornadas@selgron.com.br';                              // Recuperação e demais
@@ -655,6 +656,28 @@ function irConfig() {
   sigPads.cfSig.clear(); if (profile.assinatura) sigPads.cfSig.load(profile.assinatura);
 }
 
+
+/* ---------- Aviso de versão nova (sem depender de Ctrl+Shift+R) ---------- */
+let _avisoVersao = false;
+async function checarVersao() {
+  if (_avisoVersao) return;
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    const j = await r.json();
+    if (j.v && j.v !== APP_VERSION) mostrarAvisoVersao();
+  } catch (e) { /* offline: tenta depois */ }
+}
+function mostrarAvisoVersao() {
+  _avisoVersao = true;
+  const b = document.createElement('div'); b.className = 'novaversao';
+  b.innerHTML = '<span>🔄 Tem uma <b>versão nova</b> do app.</span> <button class="btn primary small">Atualizar agora</button>';
+  $('button', b).onclick = async () => {
+    try { if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } } catch (e) { }
+    location.reload();
+  };
+  document.body.appendChild(b);
+}
+
 /* ============================================================
    Init
    ============================================================ */
@@ -676,5 +699,9 @@ function init() {
   $('#fSearch').addEventListener('input', renderTabelaPainel);
   initAuth();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });
+  $$('.appver').forEach(e => e.textContent = 'Versão do app: ' + APP_VERSION);
+  checarVersao();
+  setInterval(checarVersao, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checarVersao(); });
 }
 document.addEventListener('DOMContentLoaded', init);
