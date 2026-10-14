@@ -107,6 +107,7 @@ function showView(v) { $$('.view').forEach(x => x.classList.toggle('active', x.i
 function setupSubtabs() {
   $$('.subtab').forEach(t => t.onclick = () => {
     const group = t.closest('.subtabs').dataset.group;
+    if (group === 'gestor') limparSelecao();
     $$(`.subtabs[data-group="${group}"] .subtab`).forEach(x => x.classList.remove('active'));
     t.classList.add('active');
     const parent = t.closest('.view');
@@ -272,14 +273,20 @@ async function carregarInbox() {
   if (error) { box.innerHTML = '<p class="mut">Erro: ' + esc(error.message) + '</p>'; return; }
   $('#inboxCount').textContent = data.length || '';
   if (!data.length) { box.innerHTML = '<p class="empty">Nenhuma ficha pendente. 🎉</p>'; return; }
-  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'gestor')));
+  data.forEach(f => fichasCache.set(f.id, f));
+  box.innerHTML = ''; box.appendChild(linhaSelecionarTodas(data));
+  data.forEach(f => box.appendChild(cardFicha(f, 'gestor')));
+  atualizarBarraLote();
 }
 async function carregarAssinadas() {
   const box = $('#assinadasLista'); box.innerHTML = '<p class="mut">Carregando…</p>';
   const { data, error } = await sb.from('fichas').select('*').in('status', ['assinada', 'arquivada']).order('assinada_em', { ascending: false });
   if (error) { box.innerHTML = '<p class="mut">Erro: ' + esc(error.message) + '</p>'; return; }
   if (!data.length) { box.innerHTML = '<p class="empty">Nenhuma ficha assinada ainda.</p>'; return; }
-  box.innerHTML = ''; data.forEach(f => box.appendChild(cardFicha(f, 'gestor')));
+  data.forEach(f => fichasCache.set(f.id, f));
+  box.innerHTML = ''; box.appendChild(linhaSelecionarTodas(data, { label: 'Só as que faltam enviar ao DHO', filtro: f => f.status === 'assinada' }));
+  data.forEach(f => box.appendChild(cardFicha(f, 'gestor')));
+  atualizarBarraLote();
 }
 
 async function assinarFicha(f, cardEl) {
@@ -388,12 +395,16 @@ function statusTrack(f) {
 function cardFicha(f, contexto) {  // contexto: 'gestor' | 'colab'
   const card = document.createElement('div');
   card.className = 'fcard' + (f.hora_extra ? ' he' : '') + (f.status === 'arquivada' ? ' done' : '');
+  card.dataset.id = f.id;
+  const selecionavel = contexto === 'gestor';
+  if (selecionavel && selecao.has(f.id)) card.classList.add('selected');
   const horas = calcHoras(f.entrada, f.saida);
   const tp = (f.tipos || []).map(t => `<span class="pill ${t === HORA_EXTRA ? 'he' : ''}">${esc(t)}</span>`).join(' ') || '';
   const heB = f.hora_extra ? '<span class="badge he">⚠ hora extra</span>' : '';
   card.innerHTML = `
     <div class="fcard-head">
-      <div><div class="nm">${esc(f.nome || '')}</div>
+      ${selecionavel ? `<label class="selbox" title="Selecionar"><input type="checkbox" class="selchk" ${selecao.has(f.id) ? 'checked' : ''}></label>` : ''}
+      <div class="fh-info"><div class="nm">${esc(f.nome || '')}</div>
       <div class="meta">${esc(normDate(f.data))} · ${esc((f.comunicado || []).join('/').replace('SAIDA', 'SAÍDA'))} ${f.entrada ? '· ent ' + esc(f.entrada) : ''} ${f.saida ? '· saí ' + esc(f.saida) : ''} ${horas != null ? '· ' + horas.toFixed(2) + 'h' : ''}</div></div>
       <div class="badges">${heB}</div>
     </div>
@@ -401,6 +412,10 @@ function cardFicha(f, contexto) {  // contexto: 'gestor' | 'colab'
     ${f.observacao ? `<div class="fcard-obs">${esc(f.observacao)}</div>` : ''}
     ${statusTrack(f)}
     <div class="fcard-actions"></div>`;
+  if (selecionavel) $('.selchk', card).onchange = e => {
+    if (e.target.checked) selecao.add(f.id); else selecao.delete(f.id);
+    card.classList.toggle('selected', e.target.checked); atualizarBarraLote();
+  };
   const act = $('.fcard-actions', card);
   const addBtn = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn ' + cls; b.textContent = label; b.onclick = () => fn(b); act.appendChild(b); };
   if (contexto === 'gestor') {
@@ -422,6 +437,103 @@ function cardFicha(f, contexto) {  // contexto: 'gestor' | 'colab'
     addBtn('📄 Duplicar', 'ghost small', () => { $$('.subtabs[data-group=colab] .subtab')[0].click(); renderFormFicha(f); });
   }
   return card;
+}
+
+/* ============================================================
+   Seleção em lote (gestor): assinar / baixar várias de uma vez
+   ============================================================ */
+const selecao = new Set();       // ids marcados
+const fichasCache = new Map();   // id → ficha carregada na tela
+
+function linhaSelecionarTodas(fichas, extra) {
+  const d = document.createElement('div'); d.className = 'selall'; d._fichas = fichas;
+  d.innerHTML = `<label><input type="checkbox"> <span>Selecionar todas (${fichas.length})</span></label>`;
+  const cb = $('input', d);
+  const marcar = (lista, on) => {
+    lista.forEach(f => on ? selecao.add(f.id) : selecao.delete(f.id));
+    $$('.fcard', d.parentNode).forEach(c => { const ch = $('.selchk', c); const on2 = selecao.has(c.dataset.id); if (ch) ch.checked = on2; c.classList.toggle('selected', on2); });
+    atualizarBarraLote();
+  };
+  cb.onchange = () => marcar(fichas, cb.checked);
+  if (extra) {
+    const alvo = fichas.filter(extra.filtro);
+    if (alvo.length) {
+      const b = document.createElement('button'); b.className = 'btn ghost small'; b.textContent = `${extra.label} (${alvo.length})`;
+      b.onclick = () => { fichas.forEach(f => selecao.delete(f.id)); marcar(alvo, true); };
+      d.appendChild(b);
+    }
+  }
+  return d;
+}
+function selecionadas() { return [...selecao].map(id => fichasCache.get(id)).filter(Boolean); }
+function limparSelecao() {
+  selecao.clear();
+  $$('.fcard.selected').forEach(c => c.classList.remove('selected'));
+  $$('.selchk, .selall input').forEach(c => c.checked = false);
+  atualizarBarraLote();
+}
+function atualizarBarraLote() {
+  const bar = $('#loteBar'); if (!bar) return;
+  const sel = selecionadas();
+  const nAss = sel.filter(f => f.status === 'enviada').length;
+  const nBai = sel.filter(f => f.status === 'assinada' || f.status === 'arquivada').length;
+  bar.hidden = sel.length === 0;
+  document.body.classList.toggle('com-lote', sel.length > 0);
+  $('#loteN').textContent = `${sel.length} selecionada${sel.length > 1 ? 's' : ''}`;
+  $('#btnLoteAssinar').textContent = `✍️ Assinar (${nAss})`; $('#btnLoteAssinar').disabled = !nAss;
+  $('#btnLoteBaixar').textContent = `⬇️ Baixar (${nBai})`; $('#btnLoteBaixar').disabled = !nBai;
+  $$('.selall').forEach(s => { const cb = $('input', s); cb.checked = s._fichas.length > 0 && s._fichas.every(f => selecao.has(f.id)); });
+}
+function trocarCard(f) {
+  const el = document.querySelector(`.fcard[data-id="${f.id}"]`);
+  if (el) el.replaceWith(cardFicha(f, 'gestor'));
+}
+
+async function assinarLote() {
+  const alvo = selecionadas().filter(f => f.status === 'enviada');
+  if (!alvo.length) return;
+  if (!profile.assinatura) { toast('Cadastre sua assinatura em ⚙️ primeiro.', 'err'); return; }
+  const he = alvo.filter(ehHoraExtra);
+  let msg = `Assinar ${alvo.length} ficha${alvo.length > 1 ? 's' : ''} de uma vez?`;
+  if (he.length) msg += `\n\n⚠ ${he.length} ${he.length > 1 ? 'são' : 'é'} de HORA EXTRA:\n` + he.map(f => `• ${f.nome} — ${dataBR(f.data)}`).join('\n');
+  if (!confirm(msg)) return;
+  const btn = $('#btnLoteAssinar'); btn.disabled = true; btn.textContent = 'Assinando…';
+  const patch = { status: 'assinada', assinatura_gestor: profile.assinatura, assinada_em: new Date().toISOString() };
+  const { error } = await sb.from('fichas').update(patch).in('id', alvo.map(f => f.id));
+  if (error) { toast('Erro ao assinar: ' + error.message, 'err'); atualizarBarraLote(); return; }
+  alvo.forEach(f => { Object.assign(f, patch); trocarCard(f); });
+  const c = $('#inboxCount'); const n = Math.max(0, (+c.textContent || 0) - alvo.length); c.textContent = n || '';
+  toast(`${alvo.length} ficha${alvo.length > 1 ? 's assinadas' : ' assinada'} ✓ — agora você pode baixá-las`, 'ok');
+  atualizarBarraLote();
+}
+
+async function baixarLote() {
+  const alvo = selecionadas().filter(f => f.status === 'assinada' || f.status === 'arquivada');
+  if (!alvo.length) return;
+  const btn = $('#btnLoteBaixar'); btn.disabled = true; btn.textContent = `Gerando ${alvo.length} PDF${alvo.length > 1 ? 's' : ''}…`;
+  const arqs = [];
+  for (const f of alvo) arqs.push({ f, nome: nomeArquivo(f), bytes: await gerarFichaPDF(f, f.assinatura_colaborador, f.assinatura_gestor) });
+  let feito = true;
+  const files = arqs.map(a => new File([a.bytes], a.nome, { type: 'application/pdf' }));
+  if (ehCelular() && navigator.canShare && navigator.canShare({ files })) {
+    try { await navigator.share({ files, title: `Fichas Mod. 012 (${files.length})` }); }
+    catch (e) { if (e.name === 'AbortError') feito = false; else await baixarEmSequencia(arqs); }
+  } else {
+    await baixarEmSequencia(arqs);
+  }
+  if (feito) {
+    const pend = alvo.filter(f => f.status === 'assinada');
+    if (pend.length) {
+      const { error } = await sb.from('fichas').update({ status: 'arquivada' }).in('id', pend.map(f => f.id));
+      if (error) toast('PDFs baixados, mas houve erro ao registrar No DHO: ' + error.message, 'err');
+      else pend.forEach(f => { f.status = 'arquivada'; trocarCard(f); });
+    }
+    toast(`${alvo.length} PDF${alvo.length > 1 ? 's baixados' : ' baixado'} ✓`, 'ok');
+  }
+  atualizarBarraLote();
+}
+async function baixarEmSequencia(arqs) {
+  for (const a of arqs) { baixarBytes(a.bytes, a.nome); await new Promise(r => setTimeout(r, 450)); }
 }
 
 async function marcarDHO(f, cardEl) {
@@ -499,6 +611,9 @@ function init() {
   $('#btnSaveProfile').onclick = () => salvarPerfil('obSig', $('#obNome').value, $('#obMat').value, $('#obSecao').value, true);
   $('#btnSaveConfig').onclick = () => salvarPerfil('cfSig', $('#cfNome').value, $('#cfMat').value, $('#cfSecao').value, false);
   $('#btnCsv').onclick = exportCsv;
+  $('#btnLoteAssinar').onclick = assinarLote;
+  $('#btnLoteBaixar').onclick = baixarLote;
+  $('#btnLoteLimpar').onclick = limparSelecao;
   $('#fSearch').addEventListener('input', renderTabelaPainel);
   initAuth();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { });

@@ -222,3 +222,24 @@ tbody tr:hover { background: var(--brand-soft); }
   .userchip { display: none; }
 }
 @media (max-width: 380px) { .row2 { grid-template-columns: 1fr; } }
+
+/* ---------- Seleção em lote ---------- */
+.fh-info { flex: 1 1 auto; min-width: 0; }
+.selbox { flex: 0 0 auto; display: flex; align-items: center; padding: 2px 4px 0 0; cursor: pointer; }
+.selbox input, .selall input { width: 22px; height: 22px; accent-color: var(--brand); cursor: pointer; }
+.fcard.selected { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(244,149,0,.35), var(--shadow); background: #fffdf8; }
+.selall { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 4px 4px 2px; }
+.selall label { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 14px; color: var(--muted); cursor: pointer; }
+.lotebar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 60;
+  width: min(94vw, 720px); background: #1b2431; color: #fff; border-radius: 16px;
+  padding: 10px 12px 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  box-shadow: var(--shadow-lg); animation: slideup .2s;
+}
+.lote-n { font-weight: 700; font-size: 14px; }
+.lote-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.lotebar .btn.ghost { color: #cfd6e0; border-color: #3a4656; }
+.lotebar .btn:disabled { opacity: .35; }
+body.com-lote .toast-wrap { bottom: 118px; }
+body.com-lote main { padding-bottom: 140px; }
+.subtab .count:empty { display: none; }
