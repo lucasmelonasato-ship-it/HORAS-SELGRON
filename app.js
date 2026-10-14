@@ -6,7 +6,8 @@
 /* ---------- Configuração ---------- */
 const SUPA_URL = 'https://xewxckloxgjrffxslasq.supabase.co';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhld3hja2xveGdqcmZmeHNsYXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1ODYzMTMsImV4cCI6MjEwMDE2MjMxM30.ALcLipiKYTGkUeN70KEIPL5sAZuS6LvNYnr8C9Yko4E';
-const DHO_EMAIL = 'jornadas@selgron.com.br';
+const DHO_EMAIL = 'jornadas@selgron.com.br';                              // Recuperação e demais
+const HE_EMAILS = 'raquel.l@selgron.com.br,portaria@selgron.com.br';      // Hora extra
 const DOMINIO = '@selgron.com.br';
 
 const sb = window.supabase.createClient(SUPA_URL, SUPA_ANON);
@@ -297,20 +298,29 @@ async function baixarFicha(f, comGestor) {
   baixarBytes(bytes, nomeArquivo(f));
   return bytes;
 }
-async function enviarDHO(f) {
+/* ---------- E-mail com destino por tipo ---------- */
+const ehHoraExtra = f => !!f.hora_extra || (f.tipos || []).includes(HORA_EXTRA);
+function dataBR(s) {
+  const n = normDate(s); const m = n.match(/^(\d{2})\.(\d{2})\.(\d{2})$/);
+  return m ? `${m[1]}/${m[2]}/20${m[3]}` : n;
+}
+function montarEmail(f) {
+  const he = ehHoraExtra(f);
+  const nome = (f.nome || '').trim().toUpperCase();
+  const data = dataBR(f.data);
+  return {
+    he,
+    para: he ? HE_EMAILS : DHO_EMAIL,
+    assunto: he ? `HORA EXTRA ${nome} - ${data}` : `FICHA 012 - ${nome} - ${data}`,
+    corpo: `Segue a ficha Mod. 012${he ? ' de HORA EXTRA' : ''} de ${nome}, referente ao dia ${data}, assinada pelo colaborador e pelo gestor.`,
+  };
+}
+async function enviarPorEmail(f) {
   const bytes = await gerarFichaPDF(f, f.assinatura_colaborador, f.assinatura_gestor);
-  const nome = nomeArquivo(f);
-  const assunto = `Ficha Mod. 012 - ${f.nome} - ${normDate(f.data)}`;
-  try {
-    const file = new File([bytes], nome, { type: 'application/pdf' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: assunto, text: assunto });
-      return;
-    }
-  } catch (e) { /* cai no fallback */ }
-  baixarBytes(bytes, nome);
-  const body = encodeURIComponent(`Segue a ficha assinada de ${f.nome} (${normDate(f.data)}).\n\nO PDF foi baixado no aparelho — anexe-o a este e-mail.`);
-  location.href = `mailto:${DHO_EMAIL}?subject=${encodeURIComponent(assunto)}&body=${body}`;
+  baixarBytes(bytes, nomeArquivo(f));   // salva o PDF assinado no aparelho para anexar
+  const m = montarEmail(f);
+  const url = `mailto:${m.para}?subject=${encodeURIComponent(m.assunto)}&body=${encodeURIComponent(m.corpo)}`;
+  setTimeout(() => { location.href = url; }, 700);
 }
 
 /* ---------- Trilho de status (📤 Enviada → ✍️ Assinada → 📧 No DHO) ---------- */
@@ -346,11 +356,13 @@ function cardFicha(f, contexto) {  // contexto: 'gestor' | 'colab'
       addBtn(f.hora_extra ? '✍️ Revisar e assinar' : '✍️ Assinar', 'primary', () => assinarFicha(f, card));
       addBtn('👁 Ver PDF', 'ghost small', () => baixarFicha(f, false));
     } else if (f.status === 'assinada') {
-      addBtn('📧 Enviar ao DHO', 'ok', async b => { b.disabled = true; await enviarDHO(f); await marcarDHO(f, card); });
-      addBtn('⬇️ Baixar', 'ghost small', async () => { await baixarFicha(f, true); await marcarDHO(f, card); });
-    } else { // arquivada — já foi ao DHO
+      const m = montarEmail(f);
+      addBtn(m.he ? '📧 Enviar — Hora Extra' : '📧 Enviar — DHO', 'ok', async b => { b.disabled = true; await enviarPorEmail(f); await marcarDHO(f, card); });
+      addBtn('⬇️ Só baixar', 'ghost small', async () => { await baixarFicha(f, true); await marcarDHO(f, card); });
+      act.insertAdjacentHTML('beforebegin', `<div class="destino">Para: <b>${esc(m.para.replace(',', ', '))}</b><br>Assunto: <b>${esc(m.assunto)}</b></div>`);
+    } else { // arquivada — já enviada
+      addBtn('📧 Reenviar', 'ghost small', () => enviarPorEmail(f));
       addBtn('⬇️ Baixar novamente', 'ghost small', () => baixarFicha(f, true));
-      addBtn('📧 Reenviar ao DHO', 'ghost small', () => enviarDHO(f));
     }
   } else { // colaborador
     addBtn('⬇️ Baixar', 'ghost small', () => baixarFicha(f, f.status !== 'enviada'));

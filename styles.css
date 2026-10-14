@@ -159,6 +159,7 @@ main { max-width: 760px; margin: 0 auto; padding: clamp(16px, 4vw, 28px) clamp(1
 .fcard-tipos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .fcard-obs { margin-top: 10px; font-size: 13px; color: var(--muted); background: var(--surface-2); padding: 9px 11px; border-radius: 10px; }
 .fcard.done::before { background: var(--ok); }
+.fcard-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
 
 /* trilho de status */
 .track { display: flex; align-items: flex-start; gap: 4px; margin-top: 14px; }
@@ -170,6 +171,8 @@ main { max-width: 760px; margin: 0 auto; padding: clamp(16px, 4vw, 28px) clamp(1
 .tstep.final.done .ic { background: var(--ok-bg); border-color: var(--ok); }
 .tline { flex: 1 1 auto; height: 2.5px; background: var(--border-2); border-radius: 2px; margin-top: 16px; }
 .tline.done { background: var(--brand); }
+.destino { margin-top: 12px; font-size: 12px; color: var(--muted); background: var(--ok-bg); border: 1px solid var(--ok-bd); border-radius: 10px; padding: 8px 11px; line-height: 1.55; word-break: break-word; }
+.destino b { color: var(--text); }
 .pill.sign { background: var(--info-bg); color: var(--info); border-color: var(--info-bd); }
 
 .badge { font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px; letter-spacing: .2px; white-space: nowrap; }
