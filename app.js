@@ -50,7 +50,7 @@ function calcHoras(e, s) {
   const a = p(e), b = p(s); if (a == null || b == null) return null;
   let d = b - a; if (d < 0) d += 1440; return Math.round(d / 60 * 100) / 100;
 }
-const fsSafe = s => (s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+const fsSafe = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
 function nomeArquivo(f) {
   const nome = (fsSafe(f.nome) || 'FICHA').toUpperCase();
   const data = normDate(f.data);
@@ -315,12 +315,56 @@ function montarEmail(f) {
     corpo: `Segue a ficha Mod. 012${he ? ' de HORA EXTRA' : ''} de ${nome}, referente ao dia ${data}, assinada pelo colaborador e pelo gestor.`,
   };
 }
+const ehComputador = () => !window.matchMedia('(pointer: coarse)').matches;
+
 async function enviarPorEmail(f) {
   const bytes = await gerarFichaPDF(f, f.assinatura_colaborador, f.assinatura_gestor);
-  baixarBytes(bytes, nomeArquivo(f));   // salva o PDF assinado no aparelho para anexar
   const m = montarEmail(f);
+  if (ehComputador()) {   // PC: e-mail pronto (.eml) com o PDF já anexado → abre no Thunderbird/Outlook
+    baixarEml(m, bytes, nomeArquivo(f));
+    toast('E-mail pronto baixado. Abra o arquivo e use "Editar como nova mensagem" (Ctrl+E) → Enviar.', 'ok');
+    return;
+  }
+  baixarBytes(bytes, nomeArquivo(f));   // celular: salva o PDF para anexar no Mail
   const url = `mailto:${m.para}?subject=${encodeURIComponent(m.assunto)}&body=${encodeURIComponent(m.corpo)}`;
   setTimeout(() => { location.href = url; }, 700);
+}
+
+/* ---------- .eml: rascunho de e-mail com anexo (abre no Thunderbird/Outlook) ---------- */
+function _b64Utf8(s) { return btoa(unescape(encodeURIComponent(s))); }
+function _b64Bytes(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
+const _quebra76 = s => s.replace(/.{1,76}/g, '$&\r\n');
+function montarEml(m, pdfBytes, nomePdf) {
+  const b = 'selgron_' + Date.now().toString(36);
+  const nomeEnc = `=?UTF-8?B?${_b64Utf8(nomePdf)}?=`;
+  return [
+    `To: ${m.para.split(',').join(', ')}`,
+    `Subject: =?UTF-8?B?${_b64Utf8(m.assunto)}?=`,
+    'X-Unsent: 1',
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${b}"`,
+    '',
+    `--${b}`,
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    _quebra76(_b64Utf8(m.corpo)),
+    `--${b}`,
+    `Content-Type: application/pdf; name="${nomeEnc}"`,
+    `Content-Disposition: attachment; filename="${nomeEnc}"; filename*=UTF-8''${encodeURIComponent(nomePdf)}`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    _quebra76(_b64Bytes(pdfBytes)),
+    `--${b}--`,
+    '',
+  ].join('\r\n');
+}
+function baixarEml(m, pdfBytes, nomePdf) {
+  const blob = new Blob([montarEml(m, pdfBytes, nomePdf)], { type: 'message/rfc822' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = nomePdf.replace(/\.pdf$/i, '') + '.eml';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 /* ---------- Trilho de status (📤 Enviada → ✍️ Assinada → 📧 No DHO) ---------- */
@@ -359,7 +403,8 @@ function cardFicha(f, contexto) {  // contexto: 'gestor' | 'colab'
       const m = montarEmail(f);
       addBtn(m.he ? '📧 Enviar — Hora Extra' : '📧 Enviar — DHO', 'ok', async b => { b.disabled = true; await enviarPorEmail(f); await marcarDHO(f, card); });
       addBtn('⬇️ Só baixar', 'ghost small', async () => { await baixarFicha(f, true); await marcarDHO(f, card); });
-      act.insertAdjacentHTML('beforebegin', `<div class="destino">Para: <b>${esc(m.para.replace(',', ', '))}</b><br>Assunto: <b>${esc(m.assunto)}</b></div>`);
+      const dica = ehComputador() ? '<br><span class="mut">No PC: abra o arquivo baixado → <b>Ctrl+E</b> (Editar como nova mensagem) → Enviar. O PDF já vai anexado.</span>' : '';
+      act.insertAdjacentHTML('beforebegin', `<div class="destino">Para: <b>${esc(m.para.replace(',', ', '))}</b><br>Assunto: <b>${esc(m.assunto)}</b>${dica}</div>`);
     } else { // arquivada — já enviada
       addBtn('📧 Reenviar', 'ghost small', () => enviarPorEmail(f));
       addBtn('⬇️ Baixar novamente', 'ghost small', () => baixarFicha(f, true));
