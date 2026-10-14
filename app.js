@@ -315,7 +315,15 @@ function montarEmail(f) {
     corpo: `Segue a ficha Mod. 012${he ? ' de HORA EXTRA' : ''} de ${nome}, referente ao dia ${data}, assinada pelo colaborador e pelo gestor.`,
   };
 }
-const ehComputador = () => !window.matchMedia('(pointer: coarse)').matches;
+// Celular pelo sistema (não pela tela de toque — notebooks com touch são computador)
+function ehCelular() {
+  const ua = navigator.userAgent || '';
+  if (navigator.userAgentData && typeof navigator.userAgentData.mobile === 'boolean' && navigator.userAgentData.mobile) return true;
+  if (/iPhone|iPod|Android.*Mobile|Android/i.test(ua)) return true;
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return true;   // iPad
+  return false;
+}
+const ehComputador = () => !ehCelular();
 
 async function enviarPorEmail(f) {
   const bytes = await gerarFichaPDF(f, f.assinatura_colaborador, f.assinatura_gestor);
