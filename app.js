@@ -520,6 +520,8 @@ async function baixarLote() {
   if (ehCelular() && navigator.canShare && navigator.canShare({ files })) {
     try { await navigator.share({ files, title: `Fichas Mod. 012 (${files.length})` }); }
     catch (e) { if (e.name === 'AbortError') feito = false; else await baixarEmSequencia(arqs); }
+  } else if (arqs.length > 1) {
+    baixarBlob(montarZip(arqs), `Fichas Mod 012 - ${arqs.length} PDFs - ${hojeBR()}.zip`);
   } else {
     await baixarEmSequencia(arqs);
   }
@@ -530,10 +532,39 @@ async function baixarLote() {
       if (error) toast('PDFs baixados, mas houve erro ao registrar No DHO: ' + error.message, 'err');
       else pend.forEach(f => { f.status = 'arquivada'; trocarCard(f); });
     }
-    toast(`${alvo.length} PDF${alvo.length > 1 ? 's baixados' : ' baixado'} ✓`, 'ok');
+    toast(alvo.length > 1 && !ehCelular() ? `ZIP com ${alvo.length} PDFs baixado ✓` : `${alvo.length} PDF${alvo.length > 1 ? 's' : ''} ✓`, 'ok');
   }
   atualizarBarraLote();
 }
+/* ---------- ZIP simples (sem compressão) para baixar o lote num arquivo só ---------- */
+const _crcT = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function _crc32(b) { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = _crcT[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function montarZip(arqs) {   // arqs: [{ nome, bytes: Uint8Array }]
+  const enc = new TextEncoder(), partes = [], central = [], usados = new Set(); let off = 0;
+  const d = new Date(), dt = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate(), tm = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  for (const a of arqs) {
+    let nome = a.nome, i = 2; while (usados.has(nome)) nome = a.nome.replace(/(\.\w+)$/, ` (${i++})$1`); usados.add(nome);
+    const nm = enc.encode(nome), data = a.bytes, crc = _crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, tm, 2], [12, dt, 2], [14, crc, 4], [18, data.length, 4], [22, data.length, 4], [26, nm.length, 2], [28, 0, 2]]
+      .forEach(([o, v, n]) => n === 4 ? lh.setUint32(o, v, true) : lh.setUint16(o, v, true));
+    partes.push(new Uint8Array(lh.buffer), nm, data);
+    const ch = new DataView(new ArrayBuffer(46));
+    [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, tm, 2], [14, dt, 2], [16, crc, 4], [20, data.length, 4], [24, data.length, 4], [28, nm.length, 2], [30, 0, 2], [32, 0, 2], [34, 0, 2], [36, 0, 2], [38, 0, 4], [42, off, 4]]
+      .forEach(([o, v, n]) => n === 4 ? ch.setUint32(o, v, true) : ch.setUint16(o, v, true));
+    central.push(new Uint8Array(ch.buffer), nm);
+    off += 30 + nm.length + data.length;
+  }
+  const csz = central.reduce((s, x) => s + x.length, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, arqs.length, true); end.setUint16(10, arqs.length, true); end.setUint32(12, csz, true); end.setUint32(16, off, true);
+  return new Blob([...partes, ...central, new Uint8Array(end.buffer)], { type: 'application/zip' });
+}
+function baixarBlob(blob, nome) {
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 8000);
+}
+const hojeBR = () => { const d = new Date(); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getFullYear()).slice(2)}`; };
+
 /* E-mails em lote (PC): um e-mail pronto (.eml) por ficha, com destino/assunto do tipo e o PDF anexado */
 async function emailsLote() {
   const alvo = selecionadas().filter(f => f.status === 'assinada' || f.status === 'arquivada');
@@ -542,18 +573,21 @@ async function emailsLote() {
   if (!confirm(`Gerar ${alvo.length} e-mail${alvo.length > 1 ? 's' : ''} pronto${alvo.length > 1 ? 's' : ''} (1 por ficha, com o PDF anexado)?\n\n` +
     `• ${alvo.length - he} para jornadas@ (DHO)\n• ${he} de hora extra para raquel.l@ e portaria@`)) return;
   const btn = $('#btnLoteEmail'); btn.disabled = true; btn.textContent = `Gerando ${alvo.length}…`;
+  const enc = new TextEncoder(), arqs = [];
   for (const f of alvo) {
     const bytes = await gerarFichaPDF(f, f.assinatura_colaborador, f.assinatura_gestor);
-    baixarEml(montarEmail(f), bytes, nomeArquivo(f));
-    await new Promise(r => setTimeout(r, 450));
+    const nome = nomeArquivo(f);
+    arqs.push({ nome: nome.replace(/\.pdf$/i, '') + '.eml', bytes: enc.encode(montarEml(montarEmail(f), bytes, nome)) });
   }
+  if (arqs.length === 1) baixarBlob(new Blob([arqs[0].bytes], { type: 'message/rfc822' }), arqs[0].nome);
+  else baixarBlob(montarZip(arqs), `E-mails fichas - ${arqs.length} - ${hojeBR()}.zip`);
   const pend = alvo.filter(f => f.status === 'assinada');
   if (pend.length) {
     const { error } = await sb.from('fichas').update({ status: 'arquivada' }).in('id', pend.map(f => f.id));
     if (error) toast('E-mails gerados, mas houve erro ao registrar No DHO: ' + error.message, 'err');
     else pend.forEach(f => { f.status = 'arquivada'; trocarCard(f); });
   }
-  toast(`${alvo.length} e-mail${alvo.length > 1 ? 's prontos baixados' : ' pronto baixado'} ✓ — abra cada um → Ctrl+E → Enviar`, 'ok');
+  toast(alvo.length > 1 ? `ZIP com ${alvo.length} e-mails baixado ✓ — abra o ZIP, dois cliques em cada e-mail → Ctrl+E → Enviar` : 'E-mail pronto baixado ✓ — abra → Ctrl+E → Enviar', 'ok');
   atualizarBarraLote();
 }
 async function baixarEmSequencia(arqs) {
