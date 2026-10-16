@@ -4,7 +4,7 @@
 'use strict';
 
 /* ---------- Configuração ---------- */
-const APP_VERSION = '2026.10.14-2016';   // atualizado por tools/versao.sh a cada publicação (igual ao version.json)
+const APP_VERSION = '2026.10.16-1442';   // atualizado por tools/versao.sh a cada publicação (igual ao version.json)
 const SUPA_URL = 'https://xewxckloxgjrffxslasq.supabase.co';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhld3hja2xveGdqcmZmeHNsYXNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ1ODYzMTMsImV4cCI6MjEwMDE2MjMxM30.ALcLipiKYTGkUeN70KEIPL5sAZuS6LvNYnr8C9Yko4E';
 const DHO_EMAIL = 'jornadas@selgron.com.br';                              // Recuperação e demais
@@ -606,14 +606,146 @@ async function marcarDHO(f, cardEl) {
 
 /* ---------- Painel (gestor) ---------- */
 let _painelDados = [];
+const COLS_PAINEL = 'id,colaborador_id,nome,secao,matricula,data,tipos,entrada,saida,observacao,hora_extra,status,created_at';   // sem as imagens de assinatura
 async function carregarPainel() {
-  const { data, error } = await sb.from('fichas').select('*').order('created_at', { ascending: false });
+  const { data, error } = await sb.from('fichas').select(COLS_PAINEL).order('created_at', { ascending: false });
   if (error) { toast('Erro no painel: ' + error.message, 'err'); return; }
   _painelDados = data || [];
   renderPainel();
 }
+
+/* ---------- Período do painel (filtra tudo abaixo dele) ---------- */
+let painelPeriodo = 12;
+try { const v = localStorage.getItem('painelPeriodo'); if (v !== null) painelPeriodo = +v; } catch (e) { }
+const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const chaveMes = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+function mesesDoPeriodo(recs) {
+  const fim = new Date(); fim.setDate(1);
+  const ts = recs.map(r => new Date(r.created_at)).filter(d => !isNaN(d));
+  const primeiro = ts.length ? new Date(Math.min(...ts)) : new Date(fim); primeiro.setDate(1);   // nunca antes da 1ª ficha do sistema
+  let ini = primeiro;
+  if (painelPeriodo > 0) { const p = new Date(fim); p.setMonth(p.getMonth() - painelPeriodo + 1); if (p > primeiro) ini = p; }
+  const out = []; const d = new Date(ini.getFullYear(), ini.getMonth(), 1);
+  while (d <= fim) { out.push(chaveMes(d)); d.setMonth(d.getMonth() + 1); }
+  return out;
+}
+function dadosPeriodo() {
+  const meses = new Set(mesesDoPeriodo(_painelDados));
+  return _painelDados.filter(r => { const d = new Date(r.created_at); return !isNaN(d) && meses.has(chaveMes(d)); });
+}
+function rotuloMes(k, i) { const [y, m] = k.split('-'); return MESES[+m - 1] + (i === 0 || m === '01' ? '/' + y.slice(2) : ''); }
+const chavePessoa = r => r.colaborador_id || norm(r.nome);
+function nomeCurto(n) { const p = (n || '').trim().split(/\s+/); return p.length > 1 ? `${p[0]} ${p[p.length - 1]}` : (p[0] || '—'); }
+function setupPeriodo() {
+  const marcar = () => $$('#fPeriodo button').forEach(b => b.classList.toggle('on', +b.dataset.p === painelPeriodo));
+  $$('#fPeriodo button').forEach(b => b.onclick = () => {
+    painelPeriodo = +b.dataset.p; try { localStorage.setItem('painelPeriodo', painelPeriodo); } catch (e) { }
+    marcar(); renderPainel();
+  });
+  marcar();
+}
+
+/* ---------- Tooltip dos gráficos (complementa: todo valor também está no rótulo/tabela) ---------- */
+function mostrarTip(ev, valor, rotulo, extra) {
+  const t = $('#chartTip'); t.textContent = '';
+  const v = document.createElement('b'); v.textContent = valor; t.appendChild(v);
+  const l = document.createElement('div'); l.textContent = rotulo; t.appendChild(l);
+  if (extra) { const x = document.createElement('div'); x.className = 'mut'; x.textContent = extra; t.appendChild(x); }
+  t.hidden = false;
+  const r = ev.target.getBoundingClientRect ? ev.target.getBoundingClientRect() : null;
+  const px = ev.clientX ?? (r ? r.left + r.width / 2 : 0), py = ev.clientY ?? (r ? r.top : 0);
+  const w = t.offsetWidth, hgt = t.offsetHeight;
+  t.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, px - w / 2)) + 'px';
+  t.style.top = Math.max(8, py - hgt - 14) + 'px';
+}
+const esconderTip = () => { const t = $('#chartTip'); if (t) t.hidden = true; };
+
+/* ---------- Gráfico 1: fichas por colaborador (barras horizontais) ---------- */
+function grupoPorPessoa(recs) {
+  const g = new Map();
+  recs.forEach(r => { const k = chavePessoa(r); if (!g.has(k)) g.set(k, { nome: (r.nome || '—').trim().toUpperCase(), fichas: [] }); g.get(k).fichas.push(r); });
+  return [...g.values()].sort((a, b) => b.fichas.length - a.fichas.length || a.nome.localeCompare(b.nome));
+}
+function renderFichasPorPessoa(pessoas) {
+  const box = $('#chartFichasPessoa'); box.textContent = '';
+  if (!pessoas.length) { box.innerHTML = '<p class="mut">Sem fichas no período.</p>'; return; }
+  const max = Math.max(...pessoas.map(p => p.fichas.length));
+  pessoas.forEach(p => {
+    const n = p.fichas.length, he = p.fichas.filter(f => f.hora_extra).length;
+    const row = document.createElement('div'); row.className = 'hb-row'; row.tabIndex = 0;
+    const nm = document.createElement('div'); nm.className = 'hb-name'; nm.textContent = nomeCurto(p.nome);
+    const tr = document.createElement('div'); tr.className = 'hb-track';
+    const bar = document.createElement('div'); bar.className = 'hb-bar'; bar.style.width = (n / max * 88) + '%';
+    const val = document.createElement('span'); val.className = 'hb-val'; val.textContent = n;
+    tr.append(bar, val); row.append(nm, tr); box.appendChild(row);
+    const tip = ev => mostrarTip(ev, `${n} ficha${n > 1 ? 's' : ''}`, p.nome, he ? `${he} de hora extra` : '');
+    row.addEventListener('pointermove', tip); row.addEventListener('focus', tip);
+    row.addEventListener('pointerleave', esconderTip); row.addEventListener('blur', esconderTip);
+  });
+}
+
+/* ---------- Gráfico 2: fichas abertas por mês (linha, rótulo em cada ponto) ---------- */
+const COR_GRAFICO = '#C66A00';   // laranja Selgron escurecido: passa contraste 3:1 sobre branco
+function svgLinha(meses, valores, maxY, nome, alto, largura) {
+  const W = Math.max(240, Math.round(largura || 320)), H = alto || 128, mL = 16, mR = 16, mT = 22, mB = 24;   // desenha na largura real: texto sempre no mesmo tamanho
+  const pw = W - mL - mR, ph = H - mT - mB, n = meses.length;
+  const x = i => mL + (n === 1 ? pw / 2 : i * pw / (n - 1));
+  const y = v => mT + ph - (maxY ? v / maxY * ph : 0);
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (t, a) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'linechart', role: 'img' });
+  svg.setAttribute('aria-label', `${nome}: ` + meses.map((m, i) => `${rotuloMes(m, i)} ${valores[i]}`).join(', '));
+  svg.appendChild(el('line', { x1: mL, x2: W - mR, y1: y(0), y2: y(0), class: 'lc-base' }));
+  const pts = valores.map((v, i) => [x(i), y(v)]);
+  if (n > 1) {
+    svg.appendChild(el('path', { d: `M${pts[0][0]},${y(0)} ` + pts.map(p => `L${p[0]},${p[1]}`).join(' ') + ` L${pts[n - 1][0]},${y(0)} Z`, class: 'lc-area', fill: COR_GRAFICO }));
+    svg.appendChild(el('path', { d: 'M' + pts.map(p => p.join(',')).join(' L'), class: 'lc-line', stroke: COR_GRAFICO }));
+  }
+  const passo = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 46))));   // rótulos de mês sem encavalar
+  meses.forEach((m, i) => {
+    const [px, py] = pts[i], v = valores[i];
+    svg.appendChild(el('circle', { cx: px, cy: py, r: 4, class: 'lc-dot', fill: COR_GRAFICO }));
+    const lbl = el('text', { x: px, y: py - 9, class: 'lc-lbl' + (v === 0 ? ' zero' : ''), 'text-anchor': 'middle' }); lbl.textContent = v; svg.appendChild(lbl);
+    if (i % passo === 0 || i === n - 1) { const mx = el('text', { x: px, y: H - 6, class: 'lc-mes', 'text-anchor': 'middle' }); mx.textContent = rotuloMes(m, i); svg.appendChild(mx); }
+    const hit = el('circle', { cx: px, cy: py, r: 13, class: 'lc-hit' });
+    hit.addEventListener('pointermove', ev => mostrarTip(ev, `${v} ficha${v === 1 ? '' : 's'}`, `${rotuloMes(m, 0)} · ${nome}`));
+    hit.addEventListener('pointerleave', esconderTip);
+    svg.appendChild(hit);
+  });
+  return svg;
+}
+function renderFichasPorMes(recs, pessoas) {
+  const meses = mesesDoPeriodo(_painelDados);
+  const conta = lista => { const c = Object.fromEntries(meses.map(m => [m, 0])); lista.forEach(r => { const k = chaveMes(new Date(r.created_at)); if (k in c) c[k]++; }); return meses.map(m => c[m]); };
+  const tb = $('#chartTime'); tb.textContent = '';
+  const tot = conta(recs);
+  const cTime = document.createElement('div'); cTime.className = 'mult-card time';
+  cTime.innerHTML = `<div class="mult-head"><span class="mult-nm">Time todo</span><span class="mut">${recs.length} no período</span></div>`;
+  tb.appendChild(cTime);
+  cTime.appendChild(svgLinha(meses, tot, Math.max(1, ...tot), 'Time todo', 150, cTime.clientWidth - 20));
+  const box = $('#chartMeses'); box.textContent = '';
+  const series = pessoas.map(p => ({ nome: p.nome, vals: conta(p.fichas), total: p.fichas.length }));
+  const maxY = Math.max(1, ...series.flatMap(s => s.vals));   // escala compartilhada
+  series.forEach(s => {
+    const c = document.createElement('div'); c.className = 'mult-card';
+    const hd = document.createElement('div'); hd.className = 'mult-head';
+    const a = document.createElement('span'); a.className = 'mult-nm'; a.textContent = nomeCurto(s.nome); a.title = s.nome;
+    const b = document.createElement('span'); b.className = 'mut'; b.textContent = `${s.total} no período`;
+    hd.append(a, b); c.appendChild(hd); box.appendChild(c);
+    c.appendChild(svgLinha(meses, s.vals, maxY, s.nome, 128, c.clientWidth - 20));
+  });
+  if (!series.length) box.innerHTML = '<p class="mut">Sem fichas no período.</p>';
+  // tabela (mesmos números, sem depender do gráfico)
+  const head = '<tr><th>Colaborador</th>' + meses.map((m, i) => `<th>${rotuloMes(m, i)}</th>`).join('') + '<th>Total</th></tr>';
+  const linha = (nm, vals, t) => `<tr><td>${esc(nm)}</td>${vals.map(v => `<td class="num">${v}</td>`).join('')}<td class="num"><b>${t}</b></td></tr>`;
+  $('#tabelaMeses').innerHTML = `<table class="tabmeses"><thead>${head}</thead><tbody>${series.map(s => linha(s.nome, s.vals, s.total)).join('')}${linha('TIME TODO', tot, recs.length)}</tbody></table>`;
+}
+
 function renderPainel() {
-  const recs = _painelDados;
+  const recs = dadosPeriodo();
+  const pessoasG = grupoPorPessoa(recs);
+  renderFichasPorPessoa(pessoasG);
+  renderFichasPorMes(recs, pessoasG);
   const pessoas = new Set(recs.map(r => firstName(r.nome)));
   const totalHoras = recs.reduce((s, r) => s + (calcHoras(r.entrada, r.saida) || 0), 0);
   const he = recs.filter(r => r.hora_extra).length;
@@ -630,7 +762,7 @@ function renderPainel() {
 }
 function renderTabelaPainel() {
   const q = norm($('#fSearch').value);
-  let recs = _painelDados;
+  let recs = dadosPeriodo();
   if (q) recs = recs.filter(r => norm(`${r.nome} ${r.data} ${(r.tipos || []).join(' ')} ${r.observacao}`).includes(q));
   $('#tblBody').innerHTML = recs.map(r => {
     const h = calcHoras(r.entrada, r.saida);
@@ -640,7 +772,7 @@ function renderTabelaPainel() {
 }
 function exportCsv() {
   const head = ['Data', 'Colaborador', 'Secao', 'Matricula', 'Tipos', 'HoraExtra', 'Entrada', 'Saida', 'Horas', 'Observacao', 'Status'];
-  const rows = _painelDados.map(r => [normDate(r.data), r.nome, r.secao, r.matricula, (r.tipos || []).join(' | '), r.hora_extra ? 'SIM' : 'nao', r.entrada, r.saida, calcHoras(r.entrada, r.saida) ?? '', (r.observacao || '').replace(/\n/g, ' '), r.status]);
+  const rows = dadosPeriodo().map(r => [normDate(r.data), r.nome, r.secao, r.matricula, (r.tipos || []).join(' | '), r.hora_extra ? 'SIM' : 'nao', r.entrada, r.saida, calcHoras(r.entrada, r.saida) ?? '', (r.observacao || '').replace(/\n/g, ' '), r.status]);
   const csv = [head, ...rows].map(row => row.map(c => `"${(c ?? '').toString().replace(/"/g, '""')}"`).join(';')).join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `horas-selgron-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
@@ -692,6 +824,8 @@ function init() {
   $('#btnSaveProfile').onclick = () => salvarPerfil('obSig', $('#obNome').value, $('#obMat').value, $('#obSecao').value, true);
   $('#btnSaveConfig').onclick = () => salvarPerfil('cfSig', $('#cfNome').value, $('#cfMat').value, $('#cfSecao').value, false);
   $('#btnCsv').onclick = exportCsv;
+  setupPeriodo();
+  let _rz; window.addEventListener('resize', () => { clearTimeout(_rz); _rz = setTimeout(() => { if ($('#gestor-painel').classList.contains('active') && _painelDados.length) renderPainel(); }, 250); });
   $('#btnLoteAssinar').onclick = assinarLote;
   $('#btnLoteBaixar').onclick = baixarLote;
   $('#btnLoteEmail').onclick = emailsLote;

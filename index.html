@@ -95,7 +95,26 @@
         </div>
       </div>
       <div class="subview" id="gestor-painel">
+        <div class="pfilters">
+          <span class="mut">Período</span>
+          <div class="seg" id="fPeriodo">
+            <button data-p="3">3 meses</button><button data-p="6">6 meses</button><button data-p="12">12 meses</button><button data-p="0">Tudo</button>
+          </div>
+        </div>
         <div class="kpis" id="kpis"></div>
+        <div class="panel">
+          <h3>Fichas por colaborador</h3>
+          <p class="chart-sub">Quem mais gera fichas no período</p>
+          <div class="hbars" id="chartFichasPessoa"></div>
+        </div>
+        <div class="panel">
+          <h3>Fichas abertas por mês</h3>
+          <p class="chart-sub">Mês em que a ficha foi aberta no app</p>
+          <div id="chartTime"></div>
+          <p class="chart-sub" style="margin-top:18px">Por colaborador · mesma escala em todos</p>
+          <div class="multiples" id="chartMeses"></div>
+          <details class="tabview"><summary>Ver em tabela</summary><div class="table-wrap" id="tabelaMeses"></div></details>
+        </div>
         <div class="panel"><h3>Horas por colaborador</h3><div class="bars" id="barsPessoa"></div></div>
         <div class="filters">
           <input type="text" id="fSearch" placeholder="🔎 Buscar…" />
@@ -139,6 +158,7 @@
   </main>
 
   <div class="toast-wrap" id="toasts"></div>
+  <div class="charttip" id="chartTip" hidden></div>
 
   <script src="vendor/pdf-lib.min.js"></script>
   <script src="vendor/supabase.js"></script>

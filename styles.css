@@ -249,3 +249,43 @@ body.com-lote main { padding-bottom: 140px; }
   background: var(--brand-soft); border: 1.5px solid var(--brand); color: var(--text); border-radius: 14px;
   padding: 10px 12px 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
   box-shadow: var(--shadow-lg); font-size: 14px; animation: slideup .25s; }
+
+/* ---------- Painel: período + gráficos ---------- */
+.pfilters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.seg { display: inline-flex; background: #fff; border: 1px solid var(--border); border-radius: 11px; padding: 3px; box-shadow: var(--shadow); }
+.seg button { border: 0; background: transparent; color: var(--muted); font-weight: 650; font-size: 13px; padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+.seg button.on { background: var(--brand-soft); color: var(--text); box-shadow: inset 0 0 0 1.5px var(--brand); }
+.chart-sub { margin: -8px 0 14px; color: var(--muted); font-size: 12.5px; }
+/* barras horizontais: 18px de espessura, ponta arredondada, base reta, valor na ponta */
+.hbars { display: flex; flex-direction: column; gap: 6px; }
+.hb-row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 12px; padding: 3px 4px; border-radius: 8px; cursor: default; outline: none; }
+.hb-row:hover, .hb-row:focus-visible { background: var(--surface-2); }
+.hb-name { font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-track { display: flex; align-items: center; gap: 8px; min-width: 0; border-left: 1px solid var(--border-2); }
+.hb-bar { height: 18px; background: #C66A00; border-radius: 0 4px 4px 0; min-width: 3px; transition: width .3s; }
+.hb-row:hover .hb-bar { filter: brightness(1.12); }
+.hb-val { font-size: 13px; font-weight: 700; color: var(--text); }
+/* linhas: 2px, marcadores 8px com anel branco, rótulo em cada ponto */
+.multiples { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.mult-card { border: 1px solid var(--border); border-radius: 12px; padding: 10px 10px 4px; background: #fff; }
+.mult-card.time { border-color: var(--brand-soft-2); background: #fffdf8; }
+.mult-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 0 4px; }
+.mult-nm { font-weight: 750; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mult-head .mut { font-size: 12px; white-space: nowrap; }
+.linechart { width: 100%; height: auto; display: block; overflow: visible; }
+.lc-base { stroke: var(--border-2); stroke-width: 1; }
+.lc-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.lc-area { opacity: .08; }
+.lc-dot { stroke: #fff; stroke-width: 2; }
+.lc-lbl { font-size: 11.5px; font-weight: 700; fill: var(--text); }
+.lc-lbl.zero { fill: var(--muted-2); font-weight: 500; }
+.lc-mes { font-size: 10.5px; fill: var(--muted); }
+.lc-hit { fill: transparent; cursor: default; }
+.tabview { margin-top: 14px; }
+.tabview summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 650; }
+.tabview .table-wrap { margin-top: 10px; }
+.tabmeses { min-width: 0; }
+.tabmeses td.num, .tabmeses th:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+.charttip { position: fixed; z-index: 120; pointer-events: none; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); padding: 8px 11px; font-size: 12.5px; color: var(--muted); max-width: 260px; }
+.charttip b { display: block; color: var(--text); font-size: 14px; }
+@media (max-width: 620px) { .hb-row { grid-template-columns: 128px 1fr; gap: 10px; } .hb-name { font-size: 12.5px; } }
